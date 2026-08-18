@@ -10,3 +10,5 @@ npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 package-lock.backup.json
+.vscode/
+supabase/.temp/
