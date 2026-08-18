@@ -442,7 +442,7 @@ function getUserClient() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AUTH HELPERS
+// AUTHENTICATION
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function getAuthenticatedUser(
@@ -452,44 +452,60 @@ async function getAuthenticatedUser(
     const authorization =
       c.req.header("Authorization") ?? "";
 
-    if (
-      !authorization.startsWith("Bearer ")
-    ) {
+    if (!authorization.startsWith("Bearer ")) {
+      console.warn("[auth] Missing Bearer token");
       return null;
     }
 
     const token =
-      authorization
-        .slice(7)
-        .trim();
+      authorization.slice(7).trim();
 
     if (!token) {
+      console.warn("[auth] Empty Bearer token");
       return null;
     }
 
-    const supabase =
-      getUserClient();
+    /*
+     * Validate the ACTUAL access token supplied by
+     * the frontend.
+     *
+     * The frontend MUST send:
+     *
+     * Authorization: Bearer <session.access_token>
+     *
+     * NOT the public anon key.
+     */
+    const supabase = getUserClient();
 
     const {
       data: { user },
       error,
-    } =
-      await supabase.auth.getUser(
-        token
-      );
+    } = await supabase.auth.getUser(token);
 
     if (error || !user) {
+      console.warn(
+        "[auth] Invalid/expired access token:",
+        error?.message
+      );
       return null;
     }
 
     const userData =
-      await kv.get(
-        `user:${user.id}`
-      );
+      await kv.get(`user:${user.id}`);
 
     const role =
       userData?.role ||
       user.user_metadata?.role;
+
+    if (
+      role !== "facilitator" &&
+      role !== "participant"
+    ) {
+      console.warn(
+        `[auth] User ${user.id} has invalid role`
+      );
+      return null;
+    }
 
     return {
       id: user.id,
@@ -506,9 +522,7 @@ async function getAuthenticatedUser(
   }
 }
 
-async function requireAuth(
-  c: any
-) {
+async function requireAuth(c: any) {
   const user =
     await getAuthenticatedUser(c);
 
@@ -520,6 +534,8 @@ async function requireAuth(
           success: false,
           error:
             "Authentication required.",
+          code:
+            "AUTHENTICATION_REQUIRED",
         },
         401
       ),
@@ -561,7 +577,7 @@ async function requireRole(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// EMAIL HELPERS
+// EMAIL
 // ─────────────────────────────────────────────────────────────────────────────
 
 function escapeHtml(value: any) {
@@ -573,107 +589,70 @@ function escapeHtml(value: any) {
     .replace(/'/g, "&#039;");
 }
 
-function emailLayout(
-  content: string
-) {
+function emailLayout(content: string) {
   return `
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<meta
-  name="viewport"
-  content="width=device-width, initial-scale=1.0"
-/>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
 </head>
-
 <body style="
-  margin:0;
-  padding:0;
-  background:#EBE2D6;
-  font-family:Arial,Helvetica,sans-serif;
-  color:#2C1810;
+margin:0;
+padding:0;
+background:#EBE2D6;
+font-family:Arial,Helvetica,sans-serif;
+color:#2C1810;
 ">
-
-<table
-  width="100%"
-  cellpadding="0"
-  cellspacing="0"
-  style="background:#EBE2D6;"
->
+<table width="100%" cellpadding="0" cellspacing="0"
+style="background:#EBE2D6;">
 <tr>
-<td
-  align="center"
-  style="padding:40px 16px;"
->
-
-<table
-  width="100%"
-  cellpadding="0"
-  cellspacing="0"
-  style="
-    max-width:600px;
-    background:#ffffff;
-    border-radius:20px;
-    overflow:hidden;
-  "
->
-
+<td align="center" style="padding:40px 16px;">
+<table width="100%" cellpadding="0" cellspacing="0"
+style="
+max-width:600px;
+background:#ffffff;
+border-radius:20px;
+overflow:hidden;
+">
 <tr>
 <td style="
-  background:#4A1C5C;
-  padding:28px 32px;
-  color:#ffffff;
+background:#4A1C5C;
+padding:28px 32px;
+color:#ffffff;
 ">
-
-<div style="
-  font-size:24px;
-  font-weight:bold;
-">
+<div style="font-size:24px;font-weight:bold;">
 Zuva Life
 </div>
-
-<div style="
-  margin-top:5px;
-  font-size:14px;
-  opacity:.85;
-">
+<div style="margin-top:5px;font-size:14px;opacity:.85;">
 Zest Journey
 </div>
-
 </td>
 </tr>
 
 <tr>
-<td style="
-  padding:36px 32px;
-">
+<td style="padding:36px 32px;">
 ${content}
 </td>
 </tr>
 
 <tr>
 <td style="
-  padding:24px 32px;
-  background:#F7F3EE;
-  color:#6B625D;
-  font-size:12px;
-  text-align:center;
+padding:24px 32px;
+background:#F7F3EE;
+color:#6B625D;
+font-size:12px;
+text-align:center;
 ">
-
 © ${new Date().getFullYear()} Zuva Life
 <br>
 Zest Journey
-
-</td>
-</tr>
-
-</table>
-
 </td>
 </tr>
 </table>
-
+</td>
+</tr>
+</table>
 </body>
 </html>
 `;
@@ -707,10 +686,7 @@ async function sendEmail({
   }
 
   try {
-    const payload: Record<
-      string,
-      any
-    > = {
+    const payload: Record<string, any> = {
       from: EMAIL_FROM,
       to: [to],
       subject,
@@ -722,40 +698,28 @@ async function sendEmail({
       attachments.length > 0
     ) {
       payload.attachments =
-        attachments.map(
-          (attachment) => ({
-            filename:
-              attachment.filename,
-            content:
-              attachment.content,
-            content_type:
-              attachment.content_type ||
-              "application/pdf",
-          })
-        );
+        attachments.map((attachment) => ({
+          filename: attachment.filename,
+          content: attachment.content,
+          content_type:
+            attachment.content_type ||
+            "application/pdf",
+        }));
     }
 
-    console.log(
-      `[email] Sending "${subject}" to ${to} from ${EMAIL_FROM}`
+    const response = await fetch(
+      "https://api.resend.com/emails",
+      {
+        method: "POST",
+        headers: {
+          Authorization:
+            `Bearer ${RESEND_API_KEY}`,
+          "Content-Type":
+            "application/json",
+        },
+        body: JSON.stringify(payload),
+      }
     );
-
-    const response =
-      await fetch(
-        "https://api.resend.com/emails",
-        {
-          method: "POST",
-          headers: {
-            Authorization:
-              `Bearer ${RESEND_API_KEY}`,
-            "Content-Type":
-              "application/json",
-          },
-          body:
-            JSON.stringify(
-              payload
-            ),
-        }
-      );
 
     const result =
       await response.json();
@@ -774,11 +738,6 @@ async function sendEmail({
           "Resend rejected the email.",
       };
     }
-
-    console.log(
-      `[email] Successfully sent to ${to}. Resend response:`,
-      result
-    );
 
     return {
       success: true,
@@ -801,32 +760,19 @@ async function sendEmail({
 // SESSION INFORMATION
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SESSION_NAMES: Record<
-  number,
-  string
-> = {
+const SESSION_NAMES: Record<number, string> = {
   1: "Identity Discovery",
   2: "Identities In Reality",
   3: "Future Self Exploration",
   4: "Integration & Next Steps",
 };
 
-const SESSION_NUMBERS = [
-  1,
-  2,
-  3,
-  4,
-];
+const SESSION_NUMBERS = [1, 2, 3, 4];
 
-function normalizeSessionNumber(
-  value: any
-) {
-  const number =
-    Number(value);
+function normalizeSessionNumber(value: any) {
+  const number = Number(value);
 
-  return Number.isInteger(
-    number
-  ) &&
+  return Number.isInteger(number) &&
     number >= 1 &&
     number <= 4
     ? number
@@ -839,34 +785,13 @@ function normalizeSessionNumber(
 
 const EMPTY_S1_BOARD = {
   currentStep: 1,
-
-  step1: {
-    selectedCards: [],
-  },
-
-  step2: {
-    exitNotes: [],
-  },
-
-  step3: {
-    stickyNotes: [],
-  },
-
-  step4: {
-    selectedRoles: [],
-  },
-
-  step5: {
-    roleNotes: {},
-  },
-
-  step6: {
-    roleZones: {},
-  },
-
-  step7: {
-    recognitionWords: [],
-  },
+  step1: { selectedCards: [] },
+  step2: { exitNotes: [] },
+  step3: { stickyNotes: [] },
+  step4: { selectedRoles: [] },
+  step5: { roleNotes: {} },
+  step6: { roleZones: {} },
+  step7: { recognitionWords: [] },
 };
 
 const EMPTY_S2_BOARD = {
@@ -884,21 +809,15 @@ const EMPTY_S4_BOARD = {
 function getEmptyBoard(
   sessionNumber: number
 ) {
-  switch (
-    sessionNumber
-  ) {
+  switch (sessionNumber) {
     case 1:
       return EMPTY_S1_BOARD;
-
     case 2:
       return EMPTY_S2_BOARD;
-
     case 3:
       return EMPTY_S3_BOARD;
-
     case 4:
       return EMPTY_S4_BOARD;
-
     default:
       return {};
   }
@@ -947,45 +866,112 @@ function getSessionFromJourney(
   sessionId: string
 ) {
   return (
-    journey.sessions ||
-    []
+    journey.sessions || []
   ).find(
     (s: any) =>
       s.id === sessionId
   );
 }
 
+function normalizeEmail(
+  email: any
+) {
+  return String(email ?? "")
+    .trim()
+    .toLowerCase();
+}
+
+/*
+ * PARTICIPANT LINK CHECK
+ *
+ * participants[] is the source of truth.
+ *
+ * participantEmail is retained for backwards
+ * compatibility with older journeys.
+ */
 function isParticipantLinked(
   journey: any,
   email: string
 ) {
   const normalized =
-    email
-      .trim()
-      .toLowerCase();
+    normalizeEmail(email);
+
+  const participants =
+    Array.isArray(
+      journey.participants
+    )
+      ? journey.participants
+      : [];
+
+  const linked =
+    participants.some(
+      (participant: any) =>
+        normalizeEmail(
+          participant?.email
+        ) === normalized
+    );
+
+  if (linked) {
+    return true;
+  }
 
   return (
-    (
-      journey.participants ||
-      []
-    ).some(
-      (participant: any) =>
-        String(
-          participant?.email ||
-            ""
-        )
-          .trim()
-          .toLowerCase() ===
-        normalized
-    ) ||
-    String(
-      journey.participantEmail ||
-        ""
-    )
-      .trim()
-      .toLowerCase() ===
-    normalized
+    normalizeEmail(
+      journey.participantEmail
+    ) === normalized
   );
+}
+
+/*
+ * REBUILD PARTICIPANT INDEX
+ *
+ * This repairs cases where the journey exists and
+ * participants[] contains the email but the
+ * participant_email:<email>:journeys index is missing.
+ */
+async function ensureParticipantJourneyIndex(
+  journey: any
+) {
+  const emails = new Set<string>();
+
+  if (journey.participantEmail) {
+    emails.add(
+      normalizeEmail(
+        journey.participantEmail
+      )
+    );
+  }
+
+  for (
+    const participant of
+    journey.participants || []
+  ) {
+    const email =
+      normalizeEmail(
+        participant?.email
+      );
+
+    if (email) {
+      emails.add(email);
+    }
+  }
+
+  for (const email of emails) {
+    const key =
+      `participant_email:${email}:journeys`;
+
+    const ids: string[] =
+      (await kv.get(key)) || [];
+
+    if (!ids.includes(journey.id)) {
+      ids.push(journey.id);
+
+      await kv.set(
+        key,
+        ids
+      );
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -997,11 +983,13 @@ async function ensureJourneySessions(
 ) {
   if (
     journey.sessions &&
-    Array.isArray(
-      journey.sessions
-    ) &&
+    Array.isArray(journey.sessions) &&
     journey.sessions.length === 4
   ) {
+    await ensureParticipantJourneyIndex(
+      journey
+    );
+
     return journey;
   }
 
@@ -1009,6 +997,10 @@ async function ensureJourneySessions(
     journey.sessionId;
 
   if (!oldSessionId) {
+    await ensureParticipantJourneyIndex(
+      journey
+    );
+
     return journey;
   }
 
@@ -1023,14 +1015,10 @@ async function ensureJourneySessions(
     "available";
 
   const sessionIds = {
-    1:
-      oldSessionId,
-    2:
-      crypto.randomUUID(),
-    3:
-      crypto.randomUUID(),
-    4:
-      crypto.randomUUID(),
+    1: oldSessionId,
+    2: crypto.randomUUID(),
+    3: crypto.randomUUID(),
+    4: crypto.randomUUID(),
   };
 
   const sessions =
@@ -1038,12 +1026,9 @@ async function ensureJourneySessions(
       (number) => ({
         id:
           sessionIds[
-            number as
-              1 | 2 | 3 | 4
+            number as 1 | 2 | 3 | 4
           ],
-
         number,
-
         status:
           number === 1
             ? oldStatus
@@ -1055,8 +1040,7 @@ async function ensureJourneySessions(
     sessions;
 
   for (
-    const session of
-    sessions
+    const session of sessions
   ) {
     const existing =
       await kv.get(
@@ -1067,20 +1051,13 @@ async function ensureJourneySessions(
       await kv.set(
         `session:${session.id}`,
         {
-          id:
-            session.id,
-
-          journeyId:
-            journey.id,
-
+          id: session.id,
+          journeyId: journey.id,
           sessionNumber:
             session.number,
-
           status:
             session.status,
-
           currentStep: 1,
-
           createdAt:
             new Date().toISOString(),
         }
@@ -1095,7 +1072,9 @@ async function ensureJourneySessions(
     }
   }
 
-  await saveJourney(
+  await saveJourney(journey);
+
+  await ensureParticipantJourneyIndex(
     journey
   );
 
@@ -1103,7 +1082,7 @@ async function ensureJourneySessions(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSION ACCESS CONTROL
+// SESSION ACCESS
 // ─────────────────────────────────────────────────────────────────────────────
 
 function canOpenSession(
@@ -1115,42 +1094,29 @@ function canOpenSession(
   }
 
   if (
-    role ===
-    "facilitator"
+    role === "facilitator"
   ) {
     return true;
   }
 
   return (
-    session.status ===
-      "available" ||
-    session.status ===
-      "in_progress" ||
-    session.status ===
-      "completed"
+    session.status === "available" ||
+    session.status === "in_progress" ||
+    session.status === "completed"
   );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF HELPERS
+// PDF
 // ─────────────────────────────────────────────────────────────────────────────
 
 function pdfEscape(
   value: string
 ) {
   return value
-    .replace(
-      /\\/g,
-      "\\\\"
-    )
-    .replace(
-      /\(/g,
-      "\\("
-    )
-    .replace(
-      /\)/g,
-      "\\)"
-    );
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
 }
 
 function flattenBoard(
@@ -1180,20 +1146,9 @@ function flattenBoard(
     return lines;
   }
 
-  if (
-    Array.isArray(value)
-  ) {
-    if (
-      value.length === 0
-    ) {
-      return lines;
-    }
-
+  if (Array.isArray(value)) {
     value.forEach(
-      (
-        item,
-        index
-      ) => {
+      (item, index) => {
         if (
           typeof item === "string" ||
           typeof item === "number" ||
@@ -1201,28 +1156,18 @@ function flattenBoard(
         ) {
           lines.push(
             `${
-              prefix ||
-              "Item"
-            } ${
-              index + 1
-            }: ${String(
-              item
-            )}`
+              prefix || "Item"
+            } ${index + 1}: ${String(item)}`
           );
         } else {
           lines.push(
             `${
-              prefix ||
-              "Item"
-            } ${
-              index + 1
-            }`
+              prefix || "Item"
+            } ${index + 1}`
           );
 
           lines.push(
-            ...flattenBoard(
-              item
-            )
+            ...flattenBoard(item)
           );
         }
       }
@@ -1232,18 +1177,13 @@ function flattenBoard(
   }
 
   if (
-    typeof value ===
-    "object"
+    typeof value === "object"
   ) {
-    Object.entries(
-      value
-    ).forEach(
+    Object.entries(value).forEach(
       ([key, child]) => {
         if (
-          key ===
-          "updatedAt" ||
-          key ===
-          "currentStep"
+          key === "updatedAt" ||
+          key === "currentStep"
         ) {
           return;
         }
@@ -1255,23 +1195,16 @@ function flattenBoard(
 
         if (
           child !== null &&
-          typeof child ===
-            "object"
+          typeof child === "object"
         ) {
-          lines.push(
-            label
-          );
+          lines.push(label);
 
           lines.push(
-            ...flattenBoard(
-              child
-            )
+            ...flattenBoard(child)
           );
         } else {
           lines.push(
-            `${label}: ${String(
-              child
-            )}`
+            `${label}: ${String(child)}`
           );
         }
       }
@@ -1296,45 +1229,38 @@ function createPdf(
         lineHeight
     );
 
-  const pages: string[][] =
-    [];
+  const pages: string[][] = [];
 
   for (
     let i = 0;
     i < lines.length;
-    i +=
-      linesPerPage
+    i += linesPerPage
   ) {
     pages.push(
       lines.slice(
         i,
-        i +
-          linesPerPage
+        i + linesPerPage
       )
     );
   }
 
-  if (
-    pages.length === 0
-  ) {
+  if (pages.length === 0) {
     pages.push([]);
   }
 
-  const objects: string[] =
-    [];
+  const objects: string[] = [];
 
   objects.push(
     "<< /Type /Catalog /Pages 2 0 R >>"
   );
 
-  const pageObjectNumbers: number[] =
-    [];
+  const pageObjectNumbers: number[] = [];
 
   const fontObjectNumber = 3;
   const firstPageObject = 4;
 
   pages.forEach(
-    (_page, index) => {
+    (_, index) => {
       pageObjectNumbers.push(
         firstPageObject +
           index * 2
@@ -1345,7 +1271,7 @@ function createPdf(
   const kids =
     pageObjectNumbers
       .map(
-        (number) =>
+        number =>
           `${number} 0 R`
       )
       .join(" ");
@@ -1359,10 +1285,7 @@ function createPdf(
   );
 
   pages.forEach(
-    (
-      pageLines,
-      pageIndex
-    ) => {
+    (pageLines, pageIndex) => {
       const pageObject =
         firstPageObject +
         pageIndex * 2;
@@ -1375,18 +1298,14 @@ function createPdf(
       ] =
         `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${fontObjectNumber} 0 R >> >> /Contents ${contentObject} 0 R >>`;
 
-      let stream =
-        "BT\n";
+      let stream = "BT\n";
 
-      stream +=
-        "/F1 11 Tf\n";
-
+      stream += "/F1 11 Tf\n";
       stream +=
         `${marginX} ${topY} Td\n`;
 
       for (
-        const line of
-        pageLines
+        const line of pageLines
       ) {
         const safe =
           line
@@ -1394,22 +1313,16 @@ function createPdf(
               /[^\x20-\x7E]/g,
               ""
             )
-            .slice(
-              0,
-              105
-            );
+            .slice(0, 105);
 
         stream +=
-          `(${pdfEscape(
-            safe
-          )}) Tj\n`;
+          `(${pdfEscape(safe)}) Tj\n`;
 
         stream +=
           `0 -${lineHeight} Td\n`;
       }
 
-      stream +=
-        "ET";
+      stream += "ET";
 
       objects[
         contentObject - 1
@@ -1421,14 +1334,10 @@ function createPdf(
   let pdf =
     "%PDF-1.4\n";
 
-  const offsets: number[] =
-    [0];
+  const offsets: number[] = [0];
 
   objects.forEach(
-    (
-      object,
-      index
-    ) => {
+    (object, index) => {
       offsets.push(
         pdf.length
       );
@@ -1436,11 +1345,8 @@ function createPdf(
       pdf +=
         `${index + 1} 0 obj\n`;
 
-      pdf +=
-        `${object}\n`;
-
-      pdf +=
-        "endobj\n";
+      pdf += `${object}\n`;
+      pdf += "endobj\n";
     }
   );
 
@@ -1457,8 +1363,7 @@ function createPdf(
 
   for (
     let i = 1;
-    i <
-    offsets.length;
+    i < offsets.length;
     i++
   ) {
     pdf +=
@@ -1488,36 +1393,27 @@ function uint8ToBase64(
 ) {
   let binary = "";
 
-  const chunkSize =
-    0x8000;
+  const chunkSize = 0x8000;
 
   for (
     let i = 0;
     i < bytes.length;
-    i +=
-      chunkSize
+    i += chunkSize
   ) {
     binary +=
       String.fromCharCode(
         ...bytes.subarray(
           i,
           Math.min(
-            i +
-              chunkSize,
+            i + chunkSize,
             bytes.length
           )
         )
       );
   }
 
-  return btoa(
-    binary
-  );
+  return btoa(binary);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// REPORT DATA
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function buildSessionReport(
   session: any,
@@ -1536,22 +1432,15 @@ async function buildSessionReport(
     `Session ${sessionNumber}`;
 
   const participant =
-    journey.participantEmail ||
     journey.participants?.[0]
       ?.email ||
+    journey.participantEmail ||
     "Participant";
 
-  const lines: string[] =
-    [];
+  const lines: string[] = [];
 
-  lines.push(
-    "ZEST JOURNEY"
-  );
-
-  lines.push(
-    "SESSION REPORT"
-  );
-
+  lines.push("ZEST JOURNEY");
+  lines.push("SESSION REPORT");
   lines.push("");
 
   lines.push(
@@ -1582,19 +1471,13 @@ async function buildSessionReport(
   );
 
   lines.push("");
-
-  lines.push(
-    "SESSION REFLECTIONS"
-  );
-
+  lines.push("SESSION REFLECTIONS");
   lines.push(
     "----------------------------------------"
   );
 
   const boardLines =
-    flattenBoard(
-      board
-    );
+    flattenBoard(board);
 
   if (
     boardLines.length === 0
@@ -1609,14 +1492,8 @@ async function buildSessionReport(
   }
 
   lines.push("");
-
-  lines.push(
-    "Zuva Life"
-  );
-
-  lines.push(
-    "Zest Journey"
-  );
+  lines.push("Zuva Life");
+  lines.push("Zest Journey");
 
   return {
     lines,
@@ -1633,7 +1510,7 @@ async function buildSessionReport(
 
 app.get(
   `${P}/health`,
-  (c) =>
+  c =>
     c.json({
       status: "ok",
       ts:
@@ -1647,15 +1524,14 @@ app.get(
 
 app.post(
   `${P}/auth/signup`,
-  async (c) => {
+  async c => {
     try {
       const {
         email,
         password,
         fullName,
         role,
-      } =
-        await c.req.json();
+      } = await c.req.json();
 
       if (
         !email ||
@@ -1687,6 +1563,9 @@ app.post(
         );
       }
 
+      const normalizedEmail =
+        normalizeEmail(email);
+
       const supabase =
         getAdminClient();
 
@@ -1697,18 +1576,13 @@ app.post(
         await supabase.auth.admin.createUser(
           {
             email:
-              email
-                .trim()
-                .toLowerCase(),
-
+              normalizedEmail,
             password,
-
             user_metadata: {
               name:
                 fullName.trim(),
               role,
             },
-
             email_confirm:
               true,
           }
@@ -1729,17 +1603,11 @@ app.post(
         {
           id:
             data.user.id,
-
           email:
-            email
-              .trim()
-              .toLowerCase(),
-
+            normalizedEmail,
           fullName:
             fullName.trim(),
-
           role,
-
           createdAt:
             new Date().toISOString(),
         }
@@ -1748,84 +1616,45 @@ app.post(
       const firstName =
         fullName
           .trim()
-          .split(
-            " "
-          )[0] ||
+          .split(" ")[0] ||
         "there";
 
       const welcomeEmail =
         await sendEmail({
           to:
-            email
-              .trim()
-              .toLowerCase(),
-
+            normalizedEmail,
           subject:
             "Welcome to Zest Journey",
-
           html:
             emailLayout(`
-              <h1 style="
-                margin:0 0 16px;
-                color:#4A1C5C;
-                font-size:28px;
-              ">
-                Welcome, ${escapeHtml(
-                  firstName
-                )}!
+              <h1 style="margin:0 0 16px;color:#4A1C5C;font-size:28px;">
+                Welcome, ${escapeHtml(firstName)}!
               </h1>
 
-              <p style="
-                font-size:16px;
-                line-height:1.7;
-              ">
-                Thank you for creating
-                your Zest Journey account.
+              <p style="font-size:16px;line-height:1.7;">
+                Thank you for creating your Zest Journey account.
               </p>
 
-              <p style="
-                font-size:16px;
-                line-height:1.7;
-              ">
-                Your account is now ready.
-                You can sign in and begin
-                exploring your journey.
+              <p style="font-size:16px;line-height:1.7;">
+                Your account is now ready. You can sign in and begin exploring your journey.
               </p>
 
-              <div style="
-                margin:28px 0;
-                text-align:center;
-              ">
-                <a
-                  href="${APP_URL}"
+              <div style="margin:28px 0;text-align:center;">
+                <a href="${APP_URL}"
                   style="
-                    display:inline-block;
-                    background:#4A1C5C;
-                    color:#ffffff;
-                    text-decoration:none;
-                    padding:14px 24px;
-                    border-radius:10px;
-                    font-weight:bold;
-                  "
-                >
+                  display:inline-block;
+                  background:#4A1C5C;
+                  color:#ffffff;
+                  text-decoration:none;
+                  padding:14px 24px;
+                  border-radius:10px;
+                  font-weight:bold;
+                  ">
                   Open Zest Journey
                 </a>
               </div>
 
-              <p style="
-                font-size:15px;
-                line-height:1.7;
-                color:#6B625D;
-              ">
-                We look forward to
-                accompanying you through
-                your journey.
-              </p>
-
-              <p style="
-                margin-top:28px;
-                font-size:15px;
-              ">
+              <p style="margin-top:28px;">
                 Warmly,<br>
                 <strong>Zuva Life</strong>
               </p>
@@ -1834,15 +1663,12 @@ app.post(
 
       return c.json({
         success: true,
-
         emailSent:
           welcomeEmail.success,
-
         emailError:
           welcomeEmail.success
             ? undefined
             : welcomeEmail.error,
-
         user: {
           id:
             data.user.id,
@@ -1876,7 +1702,7 @@ app.post(
 
 app.post(
   `${P}/auth/verify-role`,
-  async (c) => {
+  async c => {
     const auth =
       await requireAuth(c);
 
@@ -1894,18 +1720,14 @@ app.post(
 
     return c.json({
       success: true,
-
       user: {
         id:
           user.id,
-
         email:
           user.email,
-
         fullName:
           userData?.fullName ||
           user.email,
-
         role:
           userData?.role ||
           user.role,
@@ -1920,12 +1742,8 @@ app.post(
 
 app.post(
   `${P}/journeys`,
-  async (c) => {
+  async c => {
     try {
-      // ─────────────────────────────────────
-      // ONLY FACILITATORS CAN CREATE JOURNEYS
-      // ─────────────────────────────────────
-
       const auth =
         await requireRole(
           c,
@@ -1936,10 +1754,6 @@ app.post(
         return auth.response;
       }
 
-      // ─────────────────────────────────────
-      // REQUEST BODY
-      // ─────────────────────────────────────
-
       const {
         title,
         description,
@@ -1949,9 +1763,7 @@ app.post(
       } =
         await c.req.json();
 
-      if (
-        !title
-      ) {
+      if (!title) {
         return c.json(
           {
             error:
@@ -1961,18 +1773,10 @@ app.post(
         );
       }
 
-      // ─────────────────────────────────────
-      // NORMALIZE STARTING SESSION
-      // ─────────────────────────────────────
-
       const startingSessionNumber =
         normalizeSessionNumber(
           sessionNumber
         ) || 1;
-
-      // ─────────────────────────────────────
-      // AUTHENTICATED FACILITATOR
-      // ─────────────────────────────────────
 
       const authenticatedFacilitatorId =
         auth.user.id;
@@ -1991,53 +1795,25 @@ app.post(
         );
       }
 
-      // ─────────────────────────────────────
-      // CREATE JOURNEY ID
-      // ─────────────────────────────────────
-
       const journeyId =
         crypto.randomUUID();
 
-      // ─────────────────────────────────────
-      // CREATE FOUR SESSION IDS
-      // ─────────────────────────────────────
-
       const sessionIds = {
-        1:
-          crypto.randomUUID(),
-
-        2:
-          crypto.randomUUID(),
-
-        3:
-          crypto.randomUUID(),
-
-        4:
-          crypto.randomUUID(),
+        1: crypto.randomUUID(),
+        2: crypto.randomUUID(),
+        3: crypto.randomUUID(),
+        4: crypto.randomUUID(),
       };
-
-      // ─────────────────────────────────────
-      // CREATE SESSION RECORDS
-      //
-      // ONLY THE SELECTED STARTING SESSION
-      // IS AVAILABLE.
-      //
-      // ALL OTHER SESSIONS ARE LOCKED.
-      // ─────────────────────────────────────
 
       const sessions =
         SESSION_NUMBERS.map(
-          (
-            number
-          ) => ({
+          number => ({
             id:
               sessionIds[
                 number as
                   1 | 2 | 3 | 4
               ],
-
             number,
-
             status:
               number ===
               startingSessionNumber
@@ -2046,47 +1822,32 @@ app.post(
           })
         );
 
-      // ─────────────────────────────────────
-      // JOURNEY RECORD
-      // ─────────────────────────────────────
-
       const journey = {
         id:
           journeyId,
-
         title:
           title.trim(),
-
         description:
           description?.trim() ||
           "",
-
         facilitatorId:
           authenticatedFacilitatorId,
-
         facilitatorEmail:
           facilitatorEmail ||
           auth.user.email ||
           "",
-
         participantEmail:
           null,
-
         participants: [],
-
         status:
           "active",
-
         sessionId:
           sessionIds[
             startingSessionNumber as
               1 | 2 | 3 | 4
           ],
-
         startingSessionNumber,
-
         sessions,
-
         createdAt:
           new Date().toISOString(),
       };
@@ -2095,30 +1856,20 @@ app.post(
         journey
       );
 
-      // ─────────────────────────────────────
-      // CREATE SESSION + BOARD RECORDS
-      // ─────────────────────────────────────
-
       for (
-        const session of
-        sessions
+        const session of sessions
       ) {
         await kv.set(
           `session:${session.id}`,
           {
             id:
               session.id,
-
             journeyId,
-
             sessionNumber:
               session.number,
-
             status:
               session.status,
-
             currentStep: 1,
-
             createdAt:
               new Date().toISOString(),
           }
@@ -2131,10 +1882,6 @@ app.post(
           )
         );
       }
-
-      // ─────────────────────────────────────
-      // FACILITATOR JOURNEY INDEX
-      // ─────────────────────────────────────
 
       const facilitatorKey =
         `facilitator:${authenticatedFacilitatorId}:journeys`;
@@ -2159,44 +1906,31 @@ app.post(
         );
       }
 
-      // ─────────────────────────────────────
-      // RESPONSE
-      // ─────────────────────────────────────
-
       const startingSession =
         sessions.find(
-          (
-            session
-          ) =>
+          session =>
             session.number ===
             startingSessionNumber
         );
 
       return c.json({
         success: true,
-
         journey,
-
         sessionId:
           startingSession?.id ||
           null,
-
         session: {
           id:
             startingSession?.id ||
             null,
-
           number:
             startingSessionNumber,
-
           label:
             `Session ${startingSessionNumber}`,
-
           name:
             SESSION_NAMES[
               startingSessionNumber
             ],
-
           status:
             "available",
         },
@@ -2225,7 +1959,7 @@ app.post(
 
 app.get(
   `${P}/journeys/facilitator/:userId`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireRole(
@@ -2260,24 +1994,17 @@ app.get(
         `facilitator:${auth.user.id}:journeys`;
 
       const journeyIds: string[] =
-        (await kv.get(
-          key
-        )) || [];
-
-      const journeys: any[] =
+        (await kv.get(key)) ||
         [];
 
-      const validIds: string[] =
-        [];
+      const journeys: any[] = [];
+      const validIds: string[] = [];
 
       for (
-        const id of
-        journeyIds
+        const id of journeyIds
       ) {
         let journey =
-          await getJourney(
-            id
-          );
+          await getJourney(id);
 
         if (!journey) {
           continue;
@@ -2295,13 +2022,8 @@ app.get(
             journey
           );
 
-        journeys.push(
-          journey
-        );
-
-        validIds.push(
-          id
-        );
+        journeys.push(journey);
+        validIds.push(id);
       }
 
       if (
@@ -2316,20 +2038,14 @@ app.get(
 
       return c.json({
         success: true,
-
         journeys:
           journeys.sort(
-            (
-              a,
-              b
-            ) =>
+            (a, b) =>
               new Date(
-                b.createdAt ||
-                  0
+                b.createdAt || 0
               ).getTime() -
               new Date(
-                a.createdAt ||
-                  0
+                a.createdAt || 0
               ).getTime()
           ),
       });
@@ -2341,6 +2057,7 @@ app.get(
 
       return c.json(
         {
+          success: false,
           error:
             String(error),
         },
@@ -2356,7 +2073,7 @@ app.get(
 
 app.get(
   `${P}/journeys/participant/:email`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireRole(
@@ -2370,20 +2087,15 @@ app.get(
 
       const requestedEmail =
         decodeURIComponent(
-          c.req.param(
-            "email"
-          )
+          c.req.param("email")
         )
           .trim()
           .toLowerCase();
 
       const authenticatedEmail =
-        String(
-          auth.user.email ||
-            ""
-        )
-          .trim()
-          .toLowerCase();
+        normalizeEmail(
+          auth.user.email
+        );
 
       if (
         requestedEmail !==
@@ -2402,25 +2114,81 @@ app.get(
       const key =
         `participant_email:${authenticatedEmail}:journeys`;
 
-      const journeyIds: string[] =
-        (await kv.get(
-          key
-        )) || [];
-
-      const journeys: any[] =
+      /*
+       * FIRST use the index.
+       */
+      let journeyIds: string[] =
+        (await kv.get(key)) ||
         [];
 
-      const validIds: string[] =
-        [];
+      /*
+       * IMPORTANT:
+       *
+       * If the participant index is missing,
+       * scan journeys and repair the index.
+       *
+       * This protects existing journeys created
+       * before the participant index was correctly
+       * maintained.
+       */
+      const journeyEntries =
+        await kv.getEntriesByPrefix(
+          "journey:"
+        );
+
+      const indexed = new Set(
+        journeyIds
+      );
 
       for (
-        const id of
+        const entry of
+        journeyEntries
+      ) {
+        const journey =
+          entry.value;
+
+        if (!journey) {
+          continue;
+        }
+
+        if (
+          isParticipantLinked(
+            journey,
+            authenticatedEmail
+          )
+        ) {
+          if (
+            !indexed.has(
+              journey.id
+            )
+          ) {
+            journeyIds.push(
+              journey.id
+            );
+
+            indexed.add(
+              journey.id
+            );
+          }
+        }
+      }
+
+      /*
+       * Save the repaired index.
+       */
+      await kv.set(
+        key,
         journeyIds
+      );
+
+      const journeys: any[] = [];
+      const validIds: string[] = [];
+
+      for (
+        const id of journeyIds
       ) {
         let journey =
-          await getJourney(
-            id
-          );
+          await getJourney(id);
 
         if (!journey) {
           continue;
@@ -2444,11 +2212,12 @@ app.get(
           journey
         );
 
-        validIds.push(
-          id
-        );
+        validIds.push(id);
       }
 
+      /*
+       * Keep the participant index clean.
+       */
       await kv.set(
         key,
         validIds
@@ -2456,20 +2225,14 @@ app.get(
 
       return c.json({
         success: true,
-
         journeys:
           journeys.sort(
-            (
-              a,
-              b
-            ) =>
+            (a, b) =>
               new Date(
-                b.createdAt ||
-                  0
+                b.createdAt || 0
               ).getTime() -
               new Date(
-                a.createdAt ||
-                  0
+                a.createdAt || 0
               ).getTime()
           ),
       });
@@ -2481,6 +2244,7 @@ app.get(
 
       return c.json(
         {
+          success: false,
           error:
             String(error),
         },
@@ -2496,7 +2260,7 @@ app.get(
 
 app.get(
   `${P}/journeys/:id`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -2506,9 +2270,7 @@ app.get(
       }
 
       const journeyId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       let journey =
         await getJourney(
@@ -2536,8 +2298,7 @@ app.get(
           "participant" &&
         isParticipantLinked(
           journey,
-          auth.user.email ||
-            ""
+          auth.user.email || ""
         );
 
       if (
@@ -2570,6 +2331,7 @@ app.get(
 
       return c.json(
         {
+          success: false,
           error:
             String(error),
         },
@@ -2585,7 +2347,7 @@ app.get(
 
 app.delete(
   `${P}/journeys/:id`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireRole(
@@ -2598,9 +2360,7 @@ app.delete(
       }
 
       const journeyId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const journey =
         await getJourney(
@@ -2631,8 +2391,7 @@ app.delete(
       }
 
       let sessions =
-        journey.sessions ||
-        [];
+        journey.sessions || [];
 
       if (
         sessions.length === 0 &&
@@ -2650,20 +2409,13 @@ app.delete(
       const sessionIds =
         sessions
           .map(
-            (
-              session: any
-            ) =>
+            (session: any) =>
               session.id
           )
-          .filter(
-            Boolean
-          );
+          .filter(Boolean);
 
-      let deletedBoards =
-        0;
-
-      let deletedSessions =
-        0;
+      let deletedBoards = 0;
+      let deletedSessions = 0;
 
       for (
         const sessionId of
@@ -2705,9 +2457,8 @@ app.delete(
       await kv.set(
         facilitatorKey,
         facilitatorJourneys.filter(
-          (id) =>
-            id !==
-            journeyId
+          id =>
+            id !== journeyId
         )
       );
 
@@ -2718,28 +2469,24 @@ app.delete(
         journey.participantEmail
       ) {
         participantEmails.add(
-          String(
+          normalizeEmail(
             journey.participantEmail
           )
-            .trim()
-            .toLowerCase()
         );
       }
 
       for (
         const participant of
-        journey.participants ||
-        []
+        journey.participants || []
       ) {
-        if (
-          participant?.email
-        ) {
+        const email =
+          normalizeEmail(
+            participant?.email
+          );
+
+        if (email) {
           participantEmails.add(
-            String(
-              participant.email
-            )
-              .trim()
-              .toLowerCase()
+            email
           );
         }
       }
@@ -2759,9 +2506,8 @@ app.delete(
         await kv.set(
           participantKey,
           participantJourneys.filter(
-            (id) =>
-              id !==
-              journeyId
+            id =>
+              id !== journeyId
           )
         );
       }
@@ -2772,7 +2518,6 @@ app.delete(
 
       return c.json({
         success: true,
-
         deleted: {
           journey: 1,
           sessions:
@@ -2805,7 +2550,7 @@ app.delete(
 
 app.post(
   `${P}/journeys/:id/link`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireRole(
@@ -2818,14 +2563,11 @@ app.post(
       }
 
       const journeyId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const {
         participantEmail,
-      } =
-        await c.req.json();
+      } = await c.req.json();
 
       if (
         !participantEmail
@@ -2873,30 +2615,39 @@ app.post(
         );
 
       const email =
-        participantEmail
-          .trim()
-          .toLowerCase();
+        normalizeEmail(
+          participantEmail
+        );
+
+      if (!email) {
+        return c.json(
+          {
+            error:
+              "Participant email required.",
+          },
+          400
+        );
+      }
 
       if (
-        !journey.participants
+        !Array.isArray(
+          journey.participants
+        )
       ) {
         journey.participants =
           [];
       }
 
-      if (
+      const alreadyLinked =
         journey.participants.some(
-          (
-            participant: any
-          ) =>
-            String(
-              participant.email ||
-                ""
-            )
-              .trim()
-              .toLowerCase() ===
-            email
-        )
+          (participant: any) =>
+            normalizeEmail(
+              participant?.email
+            ) === email
+        );
+
+      if (
+        alreadyLinked
       ) {
         return c.json(
           {
@@ -2907,22 +2658,36 @@ app.post(
         );
       }
 
-      journey.participants.push(
-        {
-          email,
+      /*
+       * ADD PARTICIPANT
+       */
+      journey.participants.push({
+        email,
+        linkedAt:
+          new Date().toISOString(),
+      });
 
-          linkedAt:
-            new Date().toISOString(),
-        }
-      );
-
-      journey.participantEmail =
-        email;
+      /*
+       * Keep participantEmail for
+       * backwards compatibility.
+       *
+       * participants[] remains the source
+       * of truth for access.
+       */
+      if (
+        !journey.participantEmail
+      ) {
+        journey.participantEmail =
+          email;
+      }
 
       await saveJourney(
         journey
       );
 
+      /*
+       * ADD JOURNEY TO PARTICIPANT INDEX
+       */
       const participantKey =
         `participant_email:${email}:journeys`;
 
@@ -2939,12 +2704,26 @@ app.post(
         participantJourneys.push(
           journeyId
         );
-
-        await kv.set(
-          participantKey,
-          participantJourneys
-        );
       }
+
+      await kv.set(
+        participantKey,
+        participantJourneys
+      );
+
+      /*
+       * Immediately verify the index was saved.
+       */
+      const verifiedIndex: string[] =
+        (await kv.get(
+          participantKey
+        )) || [];
+
+      console.log(
+        `[journeys/link] linked ${email} to ${journeyId}; index contains journey=${verifiedIndex.includes(
+          journeyId
+        )}`
+      );
 
       const invitationEmail =
         await sendEmail({
@@ -2960,17 +2739,14 @@ app.post(
                 color:#4A1C5C;
                 font-size:28px;
               ">
-                You're invited to a
-                Zest Journey
+                You're invited to a Zest Journey
               </h1>
 
               <p style="
                 font-size:16px;
                 line-height:1.7;
               ">
-                You have been invited to
-                join a Zest Journey with
-                Zuva Life.
+                You have been invited to join a Zest Journey with Zuva Life.
               </p>
 
               <div style="
@@ -3019,9 +2795,7 @@ app.post(
                 font-size:16px;
                 line-height:1.7;
               ">
-                Your journey is now
-                available in your
-                participant dashboard.
+                Your journey is now available in your participant dashboard.
               </p>
 
               <div style="
@@ -3057,15 +2831,12 @@ app.post(
 
       return c.json({
         success: true,
-
         emailSent:
           invitationEmail.success,
-
         emailError:
           invitationEmail.success
             ? undefined
             : invitationEmail.error,
-
         journey,
       });
     } catch (error) {
@@ -3076,6 +2847,7 @@ app.post(
 
       return c.json(
         {
+          success: false,
           error:
             String(error),
         },
@@ -3091,7 +2863,7 @@ app.post(
 
 app.get(
   `${P}/sessions/:id`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -3101,14 +2873,10 @@ app.get(
       }
 
       const id =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const session =
-        await getSession(
-          id
-        );
+        await getSession(id);
 
       if (!session) {
         return c.json(
@@ -3151,8 +2919,7 @@ app.get(
           "participant" &&
         isParticipantLinked(
           journey,
-          auth.user.email ||
-            ""
+          auth.user.email || ""
         );
 
       if (
@@ -3194,13 +2961,11 @@ app.get(
       > = {};
 
       if (
-        session.sessionNumber >
-        1
+        session.sessionNumber > 1
       ) {
         for (
           const sessionItem of
-          journey.sessions ||
-          []
+          journey.sessions || []
         ) {
           if (
             sessionItem.number <
@@ -3214,8 +2979,7 @@ app.get(
             if (board) {
               previousBoards[
                 sessionItem.number
-              ] =
-                board;
+              ] = board;
             }
           }
         }
@@ -3250,7 +3014,7 @@ app.get(
 
 app.get(
   `${P}/sessions/:id/board`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -3260,14 +3024,10 @@ app.get(
       }
 
       const id =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const session =
-        await getSession(
-          id
-        );
+        await getSession(id);
 
       if (!session) {
         return c.json(
@@ -3305,8 +3065,7 @@ app.get(
           "participant" &&
         isParticipantLinked(
           journey,
-          auth.user.email ||
-            ""
+          auth.user.email || ""
         );
 
       if (
@@ -3348,7 +3107,6 @@ app.get(
 
       return c.json({
         success: true,
-
         state:
           state ||
           getEmptyBoard(
@@ -3380,7 +3138,7 @@ app.get(
 
 app.put(
   `${P}/sessions/:id/board`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -3390,14 +3148,10 @@ app.put(
       }
 
       const id =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const session =
-        await getSession(
-          id
-        );
+        await getSession(id);
 
       if (!session) {
         return c.json(
@@ -3435,8 +3189,7 @@ app.put(
           "participant" &&
         isParticipantLinked(
           journey,
-          auth.user.email ||
-            ""
+          auth.user.email || ""
         );
 
       if (
@@ -3471,9 +3224,7 @@ app.put(
         );
       }
 
-      const {
-        state,
-      } =
+      const { state } =
         await c.req.json();
 
       if (!state) {
@@ -3490,7 +3241,6 @@ app.put(
         `board:${id}`,
         {
           ...state,
-
           updatedAt:
             new Date().toISOString(),
         }
@@ -3531,12 +3281,12 @@ app.put(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — START / STATUS
+// SESSIONS — STATUS
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.put(
   `${P}/sessions/:id/status`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -3546,13 +3296,9 @@ app.put(
       }
 
       const sessionId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
-      const {
-        status,
-      } =
+      const { status } =
         await c.req.json();
 
       const session =
@@ -3611,7 +3357,7 @@ app.put(
         session.status;
 
       // ─────────────────────────────────────
-      // PARTICIPANT STATUS RULES
+      // PARTICIPANT RULES
       // ─────────────────────────────────────
 
       if (
@@ -3621,8 +3367,7 @@ app.put(
         if (
           !isParticipantLinked(
             journey,
-            auth.user.email ||
-              ""
+            auth.user.email || ""
           )
         ) {
           return c.json(
@@ -3633,9 +3378,6 @@ app.put(
             403
           );
         }
-
-        // Participants may NEVER unlock
-        // a locked session.
 
         if (
           currentStatus ===
@@ -3653,9 +3395,6 @@ app.put(
           );
         }
 
-        // Participants cannot complete
-        // sessions.
-
         if (
           status ===
           "completed"
@@ -3671,9 +3410,6 @@ app.put(
             403
           );
         }
-
-        // Participants may only move an
-        // available session into progress.
 
         if (
           status !==
@@ -3716,7 +3452,7 @@ app.put(
       }
 
       // ─────────────────────────────────────
-      // FACILITATOR RULES
+      // FACILITATOR
       // ─────────────────────────────────────
 
       if (
@@ -3769,7 +3505,7 @@ app.put(
       }
 
       // ─────────────────────────────────────
-      // FACILITATOR ENABLES SESSION
+      // ENABLE
       // ─────────────────────────────────────
 
       if (
@@ -3781,14 +3517,8 @@ app.put(
             session.sessionNumber
           );
 
-        // Session 1 can be enabled directly.
-        //
-        // Session 2/3/4 require the previous
-        // session to be completed.
-
         if (
-          sessionNumber >
-          1
+          sessionNumber > 1
         ) {
           const previousSession =
             (
@@ -3799,8 +3529,7 @@ app.put(
                 Number(
                   item.number
                 ) ===
-                sessionNumber -
-                  1
+                sessionNumber - 1
             );
 
           if (
@@ -3846,7 +3575,7 @@ app.put(
       }
 
       // ─────────────────────────────────────
-      // FACILITATOR STARTS SESSION
+      // START
       // ─────────────────────────────────────
 
       if (
@@ -3894,7 +3623,7 @@ app.put(
       }
 
       // ─────────────────────────────────────
-      // FACILITATOR COMPLETES SESSION
+      // COMPLETE
       // ─────────────────────────────────────
 
       if (
@@ -3929,17 +3658,12 @@ app.put(
             session.sessionNumber
           );
 
-        // IMPORTANT:
-        //
-        // Completing a session does NOT
-        // automatically unlock the next session.
-        //
-        // The facilitator must explicitly
-        // enable the next session.
-
+        /*
+         * DO NOT automatically unlock
+         * the next session.
+         */
         if (
-          sessionNumber ===
-          4
+          sessionNumber === 4
         ) {
           journey.status =
             "completed";
@@ -3956,10 +3680,9 @@ app.put(
           journey
         );
 
-        // ─────────────────────────────────────
-        // REPORT EMAIL
-        // ─────────────────────────────────────
-
+        /*
+         * Report email.
+         */
         let reportEmailResult:
           any = null;
 
@@ -3990,18 +3713,14 @@ app.put(
               );
 
             const base64 =
-              uint8ToBase64(
-                pdf
-              );
+              uint8ToBase64(pdf);
 
             reportEmailResult =
               await sendEmail({
                 to:
                   participantEmail,
-
                 subject:
                   `Your Zest Journey Session ${session.sessionNumber} Report`,
-
                 html:
                   emailLayout(`
                     <h1 style="
@@ -4016,12 +3735,9 @@ app.put(
                       font-size:16px;
                       line-height:1.7;
                     ">
-                      Congratulations on
-                      completing
+                      Congratulations on completing
                       <strong>
-                        Session ${
-                          session.sessionNumber
-                        }
+                        Session ${session.sessionNumber}
                         —
                         ${escapeHtml(
                           report.sessionName
@@ -4033,69 +3749,20 @@ app.put(
                       font-size:16px;
                       line-height:1.7;
                     ">
-                      Your personal session
-                      report is attached to
-                      this email.
+                      Your personal session report is attached to this email.
                     </p>
 
-                    <div style="
-                      margin:28px 0;
-                      padding:20px;
-                      background:#F7F3EE;
-                      border-radius:14px;
-                      border:1px solid #EBE2E6;
-                    ">
-                      <strong style="
-                        color:#4A1C5C;
-                      ">
-                        ${escapeHtml(
-                          journey.title
-                        )}
-                      </strong>
-
-                      <br>
-
-                      <span style="
-                        color:#6B625D;
-                      ">
-                        Session ${
-                          session.sessionNumber
-                        }
-                        —
-                        ${escapeHtml(
-                          report.sessionName
-                        )}
-                      </span>
-                    </div>
-
-                    <p style="
-                      font-size:15px;
-                      line-height:1.7;
-                      color:#6B625D;
-                    ">
-                      Keep this report as
-                      a reflection of the
-                      work you've done and
-                      the insights you've
-                      uncovered.
-                    </p>
-
-                    <p style="
-                      margin-top:28px;
-                    ">
+                    <p style="margin-top:28px;">
                       Warmly,<br>
                       <strong>Zuva Life</strong>
                     </p>
                   `),
-
                 attachments: [
                   {
                     filename:
                       report.filename,
-
                     content:
                       base64,
-
                     content_type:
                       "application/pdf",
                   },
@@ -4105,9 +3772,7 @@ app.put(
             emailError
           ) {
             reportEmailResult = {
-              success:
-                false,
-
+              success: false,
               error:
                 String(
                   emailError
@@ -4116,9 +3781,7 @@ app.put(
           }
         } else {
           reportEmailResult = {
-            success:
-              false,
-
+            success: false,
             error:
               "No participant email found for this journey.",
           };
@@ -4126,21 +3789,16 @@ app.put(
 
         return c.json({
           success: true,
-
           journey,
-
           session,
-
           reportEmail: {
             sent:
               Boolean(
                 reportEmailResult?.success
               ),
-
             email:
               participantEmail ||
               null,
-
             error:
               reportEmailResult?.success
                 ? null
@@ -4151,7 +3809,7 @@ app.put(
       }
 
       // ─────────────────────────────────────
-      // FACILITATOR LOCK
+      // LOCK
       // ─────────────────────────────────────
 
       if (
@@ -4223,12 +3881,12 @@ app.put(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — FACILITATOR ENABLE NEXT SESSION
+// FACILITATOR ENABLE NEXT SESSION
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post(
   `${P}/journeys/:journeyId/sessions/:sessionNumber/enable`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireRole(
@@ -4252,9 +3910,7 @@ app.post(
           )
         );
 
-      if (
-        !sessionNumber
-      ) {
+      if (!sessionNumber) {
         return c.json(
           {
             error:
@@ -4329,13 +3985,8 @@ app.post(
         );
       }
 
-      // ─────────────────────────────────────
-      // REQUIRE PREVIOUS SESSION
-      // ─────────────────────────────────────
-
       if (
-        sessionNumber >
-        1
+        sessionNumber > 1
       ) {
         const previous =
           journey.sessions.find(
@@ -4343,8 +3994,7 @@ app.post(
               Number(
                 s.number
               ) ===
-              sessionNumber -
-                1
+              sessionNumber - 1
           );
 
         if (
@@ -4355,10 +4005,8 @@ app.post(
           return c.json(
             {
               success: false,
-
               error:
                 `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be enabled.`,
-
               code:
                 "PREVIOUS_SESSION_NOT_COMPLETED",
             },
@@ -4366,10 +4014,6 @@ app.post(
           );
         }
       }
-
-      // ─────────────────────────────────────
-      // ENABLE TARGET
-      // ─────────────────────────────────────
 
       target.status =
         "available";
@@ -4397,12 +4041,9 @@ app.post(
 
       return c.json({
         success: true,
-
         journey,
-
         session:
-          session ||
-          target,
+          session || target,
       });
     } catch (error) {
       console.error(
@@ -4423,12 +4064,12 @@ app.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSION REPORT — DOWNLOAD
+// REPORT — DOWNLOAD
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.get(
   `${P}/sessions/:id/report`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -4438,9 +4079,7 @@ app.get(
       }
 
       const sessionId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const session =
         await getSession(
@@ -4484,8 +4123,7 @@ app.get(
             "participant" &&
           isParticipantLinked(
             journey,
-            auth.user.email ||
-              ""
+            auth.user.email || ""
           )
         );
 
@@ -4533,14 +4171,11 @@ app.get(
         pdf,
         {
           status: 200,
-
           headers: {
             "Content-Type":
               "application/pdf",
-
             "Content-Disposition":
               `attachment; filename="${report.filename}"`,
-
             "Cache-Control":
               "no-store",
           },
@@ -4564,12 +4199,12 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSION REPORT — EMAIL MANUALLY
+// REPORT — EMAIL
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post(
   `${P}/sessions/:id/report/email`,
-  async (c) => {
+  async c => {
     try {
       const auth =
         await requireAuth(c);
@@ -4579,9 +4214,7 @@ app.post(
       }
 
       const sessionId =
-        c.req.param(
-          "id"
-        );
+        c.req.param("id");
 
       const session =
         await getSession(
@@ -4625,8 +4258,7 @@ app.post(
             "participant" &&
           isParticipantLinked(
             journey,
-            auth.user.email ||
-              ""
+            auth.user.email || ""
           )
         );
 
@@ -4658,9 +4290,7 @@ app.post(
         journey.participants?.[0]
           ?.email;
 
-      if (
-        !participantEmail
-      ) {
+      if (!participantEmail) {
         return c.json(
           {
             error:
@@ -4688,9 +4318,7 @@ app.post(
         );
 
       const base64 =
-        uint8ToBase64(
-          pdf
-        );
+        uint8ToBase64(pdf);
 
       const result =
         await sendEmail({
@@ -4707,8 +4335,7 @@ app.post(
                 color:#4A1C5C;
                 font-size:28px;
               ">
-                Your session report
-                is ready
+                Your session report is ready
               </h1>
 
               <p style="
@@ -4726,38 +4353,11 @@ app.post(
                 report is ready.
               </p>
 
-              <div style="
-                background:#F7F3EE;
-                border:1px solid #EBE2E6;
-                border-radius:14px;
-                padding:20px;
-                margin:24px 0;
-              ">
-                <div style="
-                  font-size:12px;
-                  color:#6B625D;
-                  margin-bottom:6px;
-                ">
-                  JOURNEY
-                </div>
-
-                <div style="
-                  font-size:19px;
-                  font-weight:bold;
-                  color:#4A1C5C;
-                ">
-                  ${escapeHtml(
-                    journey.title
-                  )}
-                </div>
-              </div>
-
               <p style="
                 font-size:16px;
                 line-height:1.7;
               ">
-                We've attached your
-                session report as a PDF.
+                We've attached your session report as a PDF.
               </p>
 
               <p style="
@@ -4773,27 +4373,21 @@ app.post(
             {
               filename:
                 report.filename,
-
               content:
                 base64,
-
               content_type:
                 "application/pdf",
             },
           ],
         });
 
-      if (
-        !result.success
-      ) {
+      if (!result.success) {
         return c.json(
           {
             success: false,
-
             error:
               result.error ||
               "Failed to send report email.",
-
             email:
               participantEmail,
           },
@@ -4803,10 +4397,8 @@ app.post(
 
       return c.json({
         success: true,
-
         message:
           "Session report emailed successfully.",
-
         email:
           participantEmail,
       });
@@ -4834,7 +4426,7 @@ app.post(
 
 app.delete(
   `${P}/admin/cleanup-test-data`,
-  async (c) => {
+  async c => {
     try {
       const cleanupToken =
         Deno.env.get(
@@ -4892,16 +4484,14 @@ app.delete(
         ) => {
           const keys =
             entries.map(
-              (entry) =>
+              entry =>
                 entry.key
             );
 
           if (
             keys.length > 0
           ) {
-            await kv.mdel(
-              keys
-            );
+            await kv.mdel(keys);
           }
 
           return keys.length;
@@ -4912,22 +4502,18 @@ app.delete(
           await deleteIfAny(
             journeyEntries
           ),
-
         sessions:
           await deleteIfAny(
             sessionEntries
           ),
-
         boards:
           await deleteIfAny(
             boardEntries
           ),
-
         facilitatorIndexes:
           await deleteIfAny(
             facilitatorEntries
           ),
-
         participantIndexes:
           await deleteIfAny(
             participantEntries
