@@ -16,6 +16,7 @@ interface StickyNote {
   text: string;
   zone: string | null;
   color: string;
+  rotation?: number;
 }
 
 interface RecognitionWord {

@@ -383,6 +383,15 @@ const P = "/make-server-dc18f5b2";
 // ENVIRONMENT
 // ─────────────────────────────────────────────────────────────────────────────
 
+const SUPABASE_URL =
+  Deno.env.get("SUPABASE_URL") ?? "";
+
+const SUPABASE_SERVICE_ROLE_KEY =
+  Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+
+const SUPABASE_ANON_KEY =
+  Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+
 const RESEND_API_KEY =
   Deno.env.get("RESEND_API_KEY") ?? "";
 
@@ -393,6 +402,163 @@ const EMAIL_FROM =
 const APP_URL =
   Deno.env.get("APP_URL") ??
   "http://localhost:5173";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
+
+type SessionStatus =
+  | "locked"
+  | "available"
+  | "in_progress"
+  | "completed";
+
+type UserRole =
+  | "facilitator"
+  | "participant";
+
+interface AuthenticatedUser {
+  id: string;
+  email?: string;
+  role?: UserRole;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUPABASE CLIENTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+function getAdminClient() {
+  return createClient(
+    SUPABASE_URL,
+    SUPABASE_SERVICE_ROLE_KEY
+  );
+}
+
+function getUserClient() {
+  return createClient(
+    SUPABASE_URL,
+    SUPABASE_ANON_KEY
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getAuthenticatedUser(
+  c: any
+): Promise<AuthenticatedUser | null> {
+  try {
+    const authorization =
+      c.req.header("Authorization") ?? "";
+
+    if (
+      !authorization.startsWith("Bearer ")
+    ) {
+      return null;
+    }
+
+    const token =
+      authorization
+        .slice(7)
+        .trim();
+
+    if (!token) {
+      return null;
+    }
+
+    const supabase =
+      getUserClient();
+
+    const {
+      data: { user },
+      error,
+    } =
+      await supabase.auth.getUser(
+        token
+      );
+
+    if (error || !user) {
+      return null;
+    }
+
+    const userData =
+      await kv.get(
+        `user:${user.id}`
+      );
+
+    const role =
+      userData?.role ||
+      user.user_metadata?.role;
+
+    return {
+      id: user.id,
+      email: user.email,
+      role,
+    };
+  } catch (error) {
+    console.error(
+      "[auth] Failed to authenticate:",
+      error
+    );
+
+    return null;
+  }
+}
+
+async function requireAuth(
+  c: any
+) {
+  const user =
+    await getAuthenticatedUser(c);
+
+  if (!user) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          success: false,
+          error:
+            "Authentication required.",
+        },
+        401
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    user,
+  };
+}
+
+async function requireRole(
+  c: any,
+  role: UserRole
+) {
+  const auth =
+    await requireAuth(c);
+
+  if (!auth.ok) {
+    return auth;
+  }
+
+  if (auth.user.role !== role) {
+    return {
+      ok: false,
+      response: c.json(
+        {
+          success: false,
+          error:
+            "You do not have permission to perform this action.",
+        },
+        403
+      ),
+    };
+  }
+
+  return auth;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EMAIL HELPERS
@@ -407,13 +573,18 @@ function escapeHtml(value: any) {
     .replace(/'/g, "&#039;");
 }
 
-function emailLayout(content: string) {
+function emailLayout(
+  content: string
+) {
   return `
 <!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
+/>
 </head>
 
 <body style="
@@ -431,7 +602,10 @@ function emailLayout(content: string) {
   style="background:#EBE2D6;"
 >
 <tr>
-<td align="center" style="padding:40px 16px;">
+<td
+  align="center"
+  style="padding:40px 16px;"
+>
 
 <table
   width="100%"
@@ -521,19 +695,22 @@ async function sendEmail({
   }>;
 }) {
   if (!RESEND_API_KEY) {
-    console.warn(
+    console.error(
       "[email] RESEND_API_KEY is not configured."
     );
 
     return {
       success: false,
       error:
-        "RESEND_API_KEY is not configured",
+        "RESEND_API_KEY is not configured.",
     };
   }
 
   try {
-    const payload: Record<string, any> = {
+    const payload: Record<
+      string,
+      any
+    > = {
       from: EMAIL_FROM,
       to: [to],
       subject,
@@ -549,10 +726,8 @@ async function sendEmail({
           (attachment) => ({
             filename:
               attachment.filename,
-
             content:
               attachment.content,
-
             content_type:
               attachment.content_type ||
               "application/pdf",
@@ -560,31 +735,34 @@ async function sendEmail({
         );
     }
 
-    const response = await fetch(
-      "https://api.resend.com/emails",
-      {
-        method: "POST",
-
-        headers: {
-          Authorization:
-            `Bearer ${RESEND_API_KEY}`,
-
-          "Content-Type":
-            "application/json",
-        },
-
-        body: JSON.stringify(
-          payload
-        ),
-      }
+    console.log(
+      `[email] Sending "${subject}" to ${to} from ${EMAIL_FROM}`
     );
+
+    const response =
+      await fetch(
+        "https://api.resend.com/emails",
+        {
+          method: "POST",
+          headers: {
+            Authorization:
+              `Bearer ${RESEND_API_KEY}`,
+            "Content-Type":
+              "application/json",
+          },
+          body:
+            JSON.stringify(
+              payload
+            ),
+        }
+      );
 
     const result =
       await response.json();
 
     if (!response.ok) {
       console.error(
-        "[email] Resend error:",
+        "[email] Resend rejected email:",
         result
       );
 
@@ -592,12 +770,14 @@ async function sendEmail({
         success: false,
         error:
           result?.message ||
-          "Failed to send email",
+          result?.name ||
+          "Resend rejected the email.",
       };
     }
 
     console.log(
-      `[email] Email sent to ${to}`
+      `[email] Successfully sent to ${to}. Resend response:`,
+      result
     );
 
     return {
@@ -606,7 +786,7 @@ async function sendEmail({
     };
   } catch (error) {
     console.error(
-      "[email] Email error:",
+      "[email] Email request failed:",
       error
     );
 
@@ -631,6 +811,436 @@ const SESSION_NAMES: Record<
   4: "Integration & Next Steps",
 };
 
+const SESSION_NUMBERS = [
+  1,
+  2,
+  3,
+  4,
+];
+
+function normalizeSessionNumber(
+  value: any
+) {
+  const number =
+    Number(value);
+
+  return Number.isInteger(
+    number
+  ) &&
+    number >= 1 &&
+    number <= 4
+    ? number
+    : null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOARD DEFAULTS
+// ─────────────────────────────────────────────────────────────────────────────
+
+const EMPTY_S1_BOARD = {
+  currentStep: 1,
+
+  step1: {
+    selectedCards: [],
+  },
+
+  step2: {
+    exitNotes: [],
+  },
+
+  step3: {
+    stickyNotes: [],
+  },
+
+  step4: {
+    selectedRoles: [],
+  },
+
+  step5: {
+    roleNotes: {},
+  },
+
+  step6: {
+    roleZones: {},
+  },
+
+  step7: {
+    recognitionWords: [],
+  },
+};
+
+const EMPTY_S2_BOARD = {
+  currentStep: 1,
+};
+
+const EMPTY_S3_BOARD = {
+  currentStep: 1,
+};
+
+const EMPTY_S4_BOARD = {
+  currentStep: 1,
+};
+
+function getEmptyBoard(
+  sessionNumber: number
+) {
+  switch (
+    sessionNumber
+  ) {
+    case 1:
+      return EMPTY_S1_BOARD;
+
+    case 2:
+      return EMPTY_S2_BOARD;
+
+    case 3:
+      return EMPTY_S3_BOARD;
+
+    case 4:
+      return EMPTY_S4_BOARD;
+
+    default:
+      return {};
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JOURNEY HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function getJourney(
+  journeyId: string
+) {
+  return await kv.get(
+    `journey:${journeyId}`
+  );
+}
+
+async function saveJourney(
+  journey: any
+) {
+  await kv.set(
+    `journey:${journey.id}`,
+    journey
+  );
+}
+
+async function getSession(
+  sessionId: string
+) {
+  return await kv.get(
+    `session:${sessionId}`
+  );
+}
+
+async function saveSession(
+  session: any
+) {
+  await kv.set(
+    `session:${session.id}`,
+    session
+  );
+}
+
+function getSessionFromJourney(
+  journey: any,
+  sessionId: string
+) {
+  return (
+    journey.sessions ||
+    []
+  ).find(
+    (s: any) =>
+      s.id === sessionId
+  );
+}
+
+function isParticipantLinked(
+  journey: any,
+  email: string
+) {
+  const normalized =
+    email
+      .trim()
+      .toLowerCase();
+
+  return (
+    (
+      journey.participants ||
+      []
+    ).some(
+      (participant: any) =>
+        String(
+          participant?.email ||
+            ""
+        )
+          .trim()
+          .toLowerCase() ===
+        normalized
+    ) ||
+    String(
+      journey.participantEmail ||
+        ""
+    )
+      .trim()
+      .toLowerCase() ===
+    normalized
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION MIGRATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function ensureJourneySessions(
+  journey: any
+) {
+  if (
+    journey.sessions &&
+    Array.isArray(
+      journey.sessions
+    ) &&
+    journey.sessions.length === 4
+  ) {
+    return journey;
+  }
+
+  const oldSessionId =
+    journey.sessionId;
+
+  if (!oldSessionId) {
+    return journey;
+  }
+
+  const oldSession =
+    await kv.get(
+      `session:${oldSessionId}`
+    );
+
+  const oldStatus:
+    SessionStatus =
+    oldSession?.status ||
+    "available";
+
+  const sessionIds = {
+    1:
+      oldSessionId,
+    2:
+      crypto.randomUUID(),
+    3:
+      crypto.randomUUID(),
+    4:
+      crypto.randomUUID(),
+  };
+
+  const sessions =
+    SESSION_NUMBERS.map(
+      (number) => ({
+        id:
+          sessionIds[
+            number as
+              1 | 2 | 3 | 4
+          ],
+
+        number,
+
+        status:
+          number === 1
+            ? oldStatus
+            : "locked" as SessionStatus,
+      })
+    );
+
+  journey.sessions =
+    sessions;
+
+  for (
+    const session of
+    sessions
+  ) {
+    const existing =
+      await kv.get(
+        `session:${session.id}`
+      );
+
+    if (!existing) {
+      await kv.set(
+        `session:${session.id}`,
+        {
+          id:
+            session.id,
+
+          journeyId:
+            journey.id,
+
+          sessionNumber:
+            session.number,
+
+          status:
+            session.status,
+
+          currentStep: 1,
+
+          createdAt:
+            new Date().toISOString(),
+        }
+      );
+
+      await kv.set(
+        `board:${session.id}`,
+        getEmptyBoard(
+          session.number
+        )
+      );
+    }
+  }
+
+  await saveJourney(
+    journey
+  );
+
+  return journey;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION ACCESS CONTROL
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * General session access helper.
+ *
+ * Facilitators can access sessions belonging to their own journey.
+ * Participant access is handled separately through
+ * canParticipantOpenSession().
+ */
+function canOpenSession(
+  session: any,
+  role?: UserRole
+) {
+  if (!session) {
+    return false;
+  }
+
+  if (
+    role ===
+    "facilitator"
+  ) {
+    return true;
+  }
+
+  return (
+    session.status ===
+      "available" ||
+    session.status ===
+      "in_progress" ||
+    session.status ===
+      "completed"
+  );
+}
+
+/**
+ * Strict participant session access.
+ *
+ * Session 1:
+ *   available / in_progress / completed
+ *
+ * Session 2:
+ *   Session 1 MUST be completed
+ *   AND Session 2 must not be locked.
+ *
+ * Session 3:
+ *   Session 2 MUST be completed
+ *   AND Session 3 must not be locked.
+ *
+ * Session 4:
+ *   Session 3 MUST be completed
+ *   AND Session 4 must not be locked.
+ *
+ * IMPORTANT:
+ * "available" means the facilitator has explicitly enabled
+ * the session. Completing the previous session does NOT
+ * automatically make the next session available.
+ */
+function canParticipantOpenSession(
+  journey: any,
+  session: any
+) {
+  if (
+    !journey ||
+    !session
+  ) {
+    return false;
+  }
+
+  const sessionNumber =
+    Number(
+      session.sessionNumber
+    );
+
+  if (
+    !Number.isInteger(
+      sessionNumber
+    ) ||
+    sessionNumber < 1 ||
+    sessionNumber > 4
+  ) {
+    return false;
+  }
+
+  // Locked means the facilitator has not enabled
+  // the session yet.
+  if (
+    session.status ===
+    "locked"
+  ) {
+    return false;
+  }
+
+  // Session 1 has no previous-session dependency.
+  if (
+    sessionNumber === 1
+  ) {
+    return (
+      session.status ===
+        "available" ||
+      session.status ===
+        "in_progress" ||
+      session.status ===
+        "completed"
+    );
+  }
+
+  const previousSession =
+    (
+      journey.sessions ||
+      []
+    ).find(
+      (item: any) =>
+        Number(
+          item.number
+        ) ===
+        sessionNumber - 1
+    );
+
+  // The previous session MUST be completed.
+  if (
+    !previousSession ||
+    previousSession.status !==
+      "completed"
+  ) {
+    return false;
+  }
+
+  return (
+    session.status ===
+      "available" ||
+    session.status ===
+      "in_progress" ||
+    session.status ===
+      "completed"
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PDF HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -639,9 +1249,18 @@ function pdfEscape(
   value: string
 ) {
   return value
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
+    .replace(
+      /\\/g,
+      "\\\\"
+    )
+    .replace(
+      /\(/g,
+      "\\("
+    )
+    .replace(
+      /\)/g,
+      "\\)"
+    );
 }
 
 function flattenBoard(
@@ -662,37 +1281,52 @@ function flattenBoard(
     typeof value === "number" ||
     typeof value === "boolean"
   ) {
-    if (prefix) {
-      lines.push(
-        `${prefix}: ${String(value)}`
-      );
-    } else {
-      lines.push(
-        String(value)
-      );
-    }
+    lines.push(
+      prefix
+        ? `${prefix}: ${String(value)}`
+        : String(value)
+    );
 
     return lines;
   }
 
-  if (Array.isArray(value)) {
-    if (value.length === 0) {
+  if (
+    Array.isArray(value)
+  ) {
+    if (
+      value.length === 0
+    ) {
       return lines;
     }
 
     value.forEach(
-      (item, index) => {
+      (
+        item,
+        index
+      ) => {
         if (
           typeof item === "string" ||
           typeof item === "number" ||
           typeof item === "boolean"
         ) {
           lines.push(
-            `${prefix || "Item"} ${index + 1}: ${String(item)}`
+            `${
+              prefix ||
+              "Item"
+            } ${
+              index + 1
+            }: ${String(
+              item
+            )}`
           );
         } else {
           lines.push(
-            `${prefix || "Item"} ${index + 1}`
+            `${
+              prefix ||
+              "Item"
+            } ${
+              index + 1
+            }`
           );
 
           lines.push(
@@ -708,18 +1342,18 @@ function flattenBoard(
   }
 
   if (
-    typeof value === "object"
+    typeof value ===
+    "object"
   ) {
-    Object.entries(value).forEach(
+    Object.entries(
+      value
+    ).forEach(
       ([key, child]) => {
         if (
-          key === "updatedAt"
-        ) {
-          return;
-        }
-
-        if (
-          key === "currentStep"
+          key ===
+          "updatedAt" ||
+          key ===
+          "currentStep"
         ) {
           return;
         }
@@ -745,7 +1379,9 @@ function flattenBoard(
           );
         } else {
           lines.push(
-            `${label}: ${String(child)}`
+            `${label}: ${String(
+              child
+            )}`
           );
         }
       }
@@ -760,43 +1396,47 @@ function createPdf(
 ): Uint8Array {
   const PAGE_WIDTH = 595;
   const PAGE_HEIGHT = 842;
-
   const marginX = 48;
   const topY = 790;
   const lineHeight = 16;
 
-  const linesPerPage = Math.floor(
-    (topY - 55) /
-      lineHeight
-  );
+  const linesPerPage =
+    Math.floor(
+      (topY - 55) /
+        lineHeight
+    );
 
-  const pages: string[][] = [];
+  const pages: string[][] =
+    [];
 
   for (
     let i = 0;
     i < lines.length;
-    i += linesPerPage
+    i +=
+      linesPerPage
   ) {
     pages.push(
       lines.slice(
         i,
-        i + linesPerPage
+        i +
+          linesPerPage
       )
     );
   }
 
-  if (pages.length === 0) {
+  if (
+    pages.length === 0
+  ) {
     pages.push([]);
   }
 
-  const objects: string[] = [];
+  const objects: string[] =
+    [];
 
-  // Object 1 — Catalog
   objects.push(
     "<< /Type /Catalog /Pages 2 0 R >>"
   );
 
-  // Page object numbers
   const pageObjectNumbers: number[] =
     [];
 
@@ -820,18 +1460,19 @@ function createPdf(
       )
       .join(" ");
 
-  // Object 2 — Pages
   objects.push(
     `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`
   );
 
-  // Object 3 — Font
   objects.push(
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
   );
 
   pages.forEach(
-    (pageLines, pageIndex) => {
+    (
+      pageLines,
+      pageIndex
+    ) => {
       const pageObject =
         firstPageObject +
         pageIndex * 2;
@@ -854,11 +1495,9 @@ function createPdf(
         `${marginX} ${topY} Td\n`;
 
       for (
-        const line of pageLines
+        const line of
+        pageLines
       ) {
-        // PDF Helvetica doesn't support
-        // arbitrary Unicode reliably.
-        // Remove unsupported characters.
         const safe =
           line
             .replace(
@@ -896,7 +1535,10 @@ function createPdf(
     [0];
 
   objects.forEach(
-    (object, index) => {
+    (
+      object,
+      index
+    ) => {
       offsets.push(
         pdf.length
       );
@@ -925,7 +1567,8 @@ function createPdf(
 
   for (
     let i = 1;
-    i < offsets.length;
+    i <
+    offsets.length;
     i++
   ) {
     pdf +=
@@ -961,20 +1604,25 @@ function uint8ToBase64(
   for (
     let i = 0;
     i < bytes.length;
-    i += chunkSize
+    i +=
+      chunkSize
   ) {
-    binary += String.fromCharCode(
-      ...bytes.subarray(
-        i,
-        Math.min(
-          i + chunkSize,
-          bytes.length
+    binary +=
+      String.fromCharCode(
+        ...bytes.subarray(
+          i,
+          Math.min(
+            i +
+              chunkSize,
+            bytes.length
+          )
         )
-      )
-    );
+      );
   }
 
-  return btoa(binary);
+  return btoa(
+    binary
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1003,7 +1651,8 @@ async function buildSessionReport(
       ?.email ||
     "Participant";
 
-  const lines: string[] = [];
+  const lines: string[] =
+    [];
 
   lines.push(
     "ZEST JOURNEY"
@@ -1053,7 +1702,9 @@ async function buildSessionReport(
   );
 
   const boardLines =
-    flattenBoard(board);
+    flattenBoard(
+      board
+    );
 
   if (
     boardLines.length === 0
@@ -1087,245 +1738,17 @@ async function buildSessionReport(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AUTOMATIC SESSION REPORT EMAIL
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function sendAutomaticSessionReportEmail(
-  session: any,
-  journey: any
-) {
-  // Prevent duplicate automatic emails.
-  // Once a report has successfully been sent,
-  // reportEmailSentAt is stored on the session.
-  if (
-    session.reportEmailSentAt
-  ) {
-    console.log(
-      `[session-report] Report already emailed for session ${session.id}. Skipping duplicate email.`
-    );
-
-    return {
-      success: true,
-      skipped: true,
-      alreadySent: true,
-      sentAt:
-        session.reportEmailSentAt,
-    };
-  }
-
-  const participantEmail =
-    journey.participantEmail ||
-    journey.participants?.[0]
-      ?.email;
-
-  if (
-    !participantEmail
-  ) {
-    console.warn(
-      "[session-report] No participant email found."
-    );
-
-    return {
-      success: false,
-      skipped: true,
-      error:
-        "No participant email found.",
-    };
-  }
-
-  try {
-    const board =
-      (await kv.get(
-        `board:${session.id}`
-      )) || {};
-
-    const report =
-      await buildSessionReport(
-        session,
-        journey,
-        board
-      );
-
-    const pdf =
-      createPdf(
-        report.lines
-      );
-
-    const base64 =
-      uint8ToBase64(
-        pdf
-      );
-
-    const emailResult =
-      await sendEmail({
-        to:
-          participantEmail,
-
-        subject:
-          `Your Zest Journey Session ${session.sessionNumber} Report`,
-
-        html:
-          emailLayout(`
-            <h1 style="
-              margin:0 0 16px;
-              color:#4A1C5C;
-              font-size:28px;
-            ">
-              Your session is complete
-            </h1>
-
-            <p style="
-              font-size:16px;
-              line-height:1.7;
-            ">
-              Congratulations on completing
-              <strong>
-                Session ${session.sessionNumber}
-                — ${escapeHtml(
-                  report.sessionName
-                )}
-              </strong>.
-            </p>
-
-            <p style="
-              font-size:16px;
-              line-height:1.7;
-            ">
-              Your personal session report
-              is attached to this email.
-            </p>
-
-            <div style="
-              margin:28px 0;
-              padding:20px;
-              background:#F7F3EE;
-              border-radius:14px;
-              border:1px solid #EBE2D6;
-            ">
-
-              <strong style="
-                color:#4A1C5C;
-              ">
-                ${escapeHtml(
-                  journey.title
-                )}
-              </strong>
-
-              <br>
-
-              <span style="
-                color:#6B625D;
-              ">
-                Session ${
-                  session.sessionNumber
-                }
-                —
-                ${escapeHtml(
-                  report.sessionName
-                )}
-              </span>
-
-            </div>
-
-            <p style="
-              font-size:15px;
-              line-height:1.7;
-              color:#6B625D;
-            ">
-              Keep this report as
-              a reflection of the
-              work you've done and
-              the insights you've
-              uncovered.
-            </p>
-
-            <p style="
-              margin-top:28px;
-            ">
-              Warmly,<br>
-              <strong>Zuva Life</strong>
-            </p>
-          `),
-
-        attachments: [
-          {
-            filename:
-              report.filename,
-
-            content:
-              base64,
-
-            content_type:
-              "application/pdf",
-          },
-        ],
-      });
-
-    if (
-      !emailResult.success
-    ) {
-      console.warn(
-        `[session-report] Email failed: ${emailResult.error}`
-      );
-
-      return {
-        success: false,
-        skipped: false,
-        error:
-          emailResult.error ||
-          "Failed to send report email.",
-      };
-    }
-
-    // Only mark the report as sent after
-    // Resend confirms successful delivery.
-    session.reportEmailSentAt =
-      new Date().toISOString();
-
-    await kv.set(
-      `session:${session.id}`,
-      session
-    );
-
-    console.log(
-      `[session-report] Report emailed successfully to ${participantEmail}`
-    );
-
-    return {
-      success: true,
-      skipped: false,
-      alreadySent: false,
-      email:
-        participantEmail,
-      sentAt:
-        session.reportEmailSentAt,
-    };
-  } catch (error) {
-    console.error(
-      "[session-report] Error:",
-      error
-    );
-
-    return {
-      success: false,
-      skipped: false,
-      error: String(error),
-    };
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // HEALTH
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.get(
   `${P}/health`,
-  (c) => {
-    return c.json({
+  (c) =>
+    c.json({
       status: "ok",
-      ts: new Date().toISOString(),
-    });
-  }
+      ts:
+        new Date().toISOString(),
+    })
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1341,7 +1764,8 @@ app.post(
         password,
         fullName,
         role,
-      } = await c.req.json();
+      } =
+        await c.req.json();
 
       if (
         !email ||
@@ -1352,22 +1776,29 @@ app.post(
         return c.json(
           {
             error:
-              "Missing required fields",
+              "Missing required fields.",
+          },
+          400
+        );
+      }
+
+      if (
+        ![
+          "facilitator",
+          "participant",
+        ].includes(role)
+      ) {
+        return c.json(
+          {
+            error:
+              "Invalid role.",
           },
           400
         );
       }
 
       const supabase =
-        createClient(
-          Deno.env.get(
-            "SUPABASE_URL"
-          ) ?? "",
-
-          Deno.env.get(
-            "SUPABASE_SERVICE_ROLE_KEY"
-          ) ?? ""
-        );
+        getAdminClient();
 
       const {
         data,
@@ -1375,11 +1806,16 @@ app.post(
       } =
         await supabase.auth.admin.createUser(
           {
-            email,
+            email:
+              email
+                .trim()
+                .toLowerCase(),
+
             password,
 
             user_metadata: {
-              name: fullName,
+              name:
+                fullName.trim(),
               role,
             },
 
@@ -1404,9 +1840,13 @@ app.post(
           id:
             data.user.id,
 
-          email,
+          email:
+            email
+              .trim()
+              .toLowerCase(),
 
-          fullName,
+          fullName:
+            fullName.trim(),
 
           role,
 
@@ -1415,19 +1855,20 @@ app.post(
         }
       );
 
-      // ─────────────────────────────────────────
-      // WELCOME EMAIL
-      // ─────────────────────────────────────────
-
       const firstName =
         fullName
           .trim()
-          .split(" ")[0] ||
+          .split(
+            " "
+          )[0] ||
         "there";
 
       const welcomeEmail =
         await sendEmail({
-          to: email,
+          to:
+            email
+              .trim()
+              .toLowerCase(),
 
           subject:
             "Welcome to Zest Journey",
@@ -1501,17 +1942,16 @@ app.post(
             `),
         });
 
-      if (
-        !welcomeEmail.success
-      ) {
-        console.warn(
-          "[signup] Welcome email failed:",
-          welcomeEmail.error
-        );
-      }
-
       return c.json({
         success: true,
+
+        emailSent:
+          welcomeEmail.success,
+
+        emailError:
+          welcomeEmail.success
+            ? undefined
+            : welcomeEmail.error,
 
         user: {
           id:
@@ -1520,21 +1960,22 @@ app.post(
           email:
             data.user.email,
 
-          fullName,
+          fullName:
+            fullName.trim(),
 
           role,
         },
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Signup error:",
-        e
+        "[signup]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -1549,435 +1990,40 @@ app.post(
 app.post(
   `${P}/auth/verify-role`,
   async (c) => {
-    try {
-      const authorization =
-        c.req.header(
-          "Authorization"
-        ) ?? "";
+    const auth =
+      await requireAuth(c);
 
-      const accessToken =
-        authorization.startsWith(
-          "Bearer "
-        )
-          ? authorization
-              .slice(7)
-              .trim()
-          : "";
-
-      if (!accessToken) {
-        return c.json(
-          {
-            error:
-              "No access token",
-          },
-          401
-        );
-      }
-
-      const supabase =
-        createClient(
-          Deno.env.get(
-            "SUPABASE_URL"
-          ) ?? "",
-
-          Deno.env.get(
-            "SUPABASE_ANON_KEY"
-          ) ?? ""
-        );
-
-      const {
-        data: { user },
-        error,
-      } =
-        await supabase.auth.getUser(
-          accessToken
-        );
-
-      if (
-        error ||
-        !user
-      ) {
-        return c.json(
-          {
-            error:
-              "Invalid token",
-          },
-          401
-        );
-      }
-
-      const userData =
-        await kv.get(
-          `user:${user.id}`
-        );
-
-      const role =
-        userData?.role ||
-        user.user_metadata?.role;
-
-      return c.json({
-        success: true,
-
-        user: {
-          id:
-            user.id,
-
-          email:
-            user.email,
-
-          fullName:
-            userData?.fullName ||
-            user.user_metadata
-              ?.name,
-
-          role,
-        },
-      });
-    } catch (e) {
-      console.error(
-        "Verify role error:",
-        e
-      );
-
-      return c.json(
-        {
-          error:
-            String(e),
-        },
-        500
-      );
+    if (!auth.ok) {
+      return auth.response;
     }
-  }
-);
 
-// ─────────────────────────────────────────────────────────────────────────────
-// BOARD DEFAULTS
-// ─────────────────────────────────────────────────────────────────────────────
+    const user =
+      auth.user;
 
-const EMPTY_S1_BOARD = {
-  currentStep: 1,
-
-  step1: {
-    selectedCards: [],
-  },
-
-  step2: {
-    exitNotes: [],
-  },
-
-  step3: {
-    stickyNotes: [],
-  },
-
-  step4: {
-    selectedRoles: [],
-  },
-
-  step5: {
-    roleNotes: {},
-  },
-
-  step6: {
-    roleZones: {},
-  },
-
-  step7: {
-    recognitionWords: [],
-  },
-};
-
-const EMPTY_S2_BOARD = {
-  currentStep: 1,
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// JOURNEY SESSION MIGRATION
-// ─────────────────────────────────────────────────────────────────────────────
-
-async function ensureJourneySessions(
-  journey: any
-) {
-  if (
-    journey.sessions &&
-    journey.sessions.length === 4
-  ) {
-    return journey;
-  }
-
-  const s1Id =
-    journey.sessionId;
-
-  if (!s1Id) {
-    return journey;
-  }
-
-  const s2Id =
-    crypto.randomUUID();
-
-  const s3Id =
-    crypto.randomUUID();
-
-  const s4Id =
-    crypto.randomUUID();
-
-  const s1 =
-    await kv.get(
-      `session:${s1Id}`
-    );
-
-  const s1Status =
-    s1?.status ||
-    "available";
-
-  journey.sessions = [
-    {
-      id: s1Id,
-      number: 1,
-      status: s1Status,
-    },
-
-    {
-      id: s2Id,
-      number: 2,
-      status:
-        s1Status === "completed"
-          ? "available"
-          : "locked",
-    },
-
-    {
-      id: s3Id,
-      number: 3,
-      status: "locked",
-    },
-
-    {
-      id: s4Id,
-      number: 4,
-      status: "locked",
-    },
-  ];
-
-  for (
-    const session of
-    journey.sessions.slice(1)
-  ) {
-    const existing =
+    const userData =
       await kv.get(
-        `session:${session.id}`
+        `user:${user.id}`
       );
 
-    if (!existing) {
-      await kv.set(
-        `session:${session.id}`,
-        {
-          id:
-            session.id,
+    return c.json({
+      success: true,
 
-          journeyId:
-            journey.id,
+      user: {
+        id:
+          user.id,
 
-          sessionNumber:
-            session.number,
+        email:
+          user.email,
 
-          status:
-            session.status,
+        fullName:
+          userData?.fullName ||
+          user.email,
 
-          currentStep: 1,
-
-          createdAt:
-            new Date().toISOString(),
-        }
-      );
-
-      await kv.set(
-        `board:${session.id}`,
-        EMPTY_S2_BOARD
-      );
-    }
-  }
-
-  await kv.set(
-    `journey:${journey.id}`,
-    journey
-  );
-
-  return journey;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// ADMIN — CLEANUP TEST DATA
-// ─────────────────────────────────────────────────────────────────────────────
-
-app.delete(
-  `${P}/admin/cleanup-test-data`,
-  async (c) => {
-    try {
-      const cleanupToken =
-        Deno.env.get(
-          "CLEANUP_TOKEN"
-        );
-
-      const providedToken =
-        c.req.header(
-          "X-Cleanup-Token"
-        ) ?? "";
-
-      if (
-        !cleanupToken ||
-        !providedToken ||
-        providedToken !==
-          cleanupToken
-      ) {
-        return c.json(
-          {
-            error:
-              "Unauthorized",
-          },
-          401
-        );
-      }
-
-      console.log(
-        "[cleanup] Starting test data cleanup..."
-      );
-
-      const journeyEntries =
-        await kv.getEntriesByPrefix(
-          "journey:"
-        );
-
-      const journeyKeys =
-        journeyEntries.map(
-          (entry) =>
-            entry.key
-        );
-
-      const sessionEntries =
-        await kv.getEntriesByPrefix(
-          "session:"
-        );
-
-      const sessionKeys =
-        sessionEntries.map(
-          (entry) =>
-            entry.key
-        );
-
-      const boardEntries =
-        await kv.getEntriesByPrefix(
-          "board:"
-        );
-
-      const boardKeys =
-        boardEntries.map(
-          (entry) =>
-            entry.key
-        );
-
-      const facilitatorEntries =
-        await kv.getEntriesByPrefix(
-          "facilitator:"
-        );
-
-      const facilitatorKeys =
-        facilitatorEntries.map(
-          (entry) =>
-            entry.key
-        );
-
-      const participantEntries =
-        await kv.getEntriesByPrefix(
-          "participant_email:"
-        );
-
-      const participantKeys =
-        participantEntries.map(
-          (entry) =>
-            entry.key
-        );
-
-      if (
-        journeyKeys.length > 0
-      ) {
-        await kv.mdel(
-          journeyKeys
-        );
-      }
-
-      if (
-        sessionKeys.length > 0
-      ) {
-        await kv.mdel(
-          sessionKeys
-        );
-      }
-
-      if (
-        boardKeys.length > 0
-      ) {
-        await kv.mdel(
-          boardKeys
-        );
-      }
-
-      if (
-        facilitatorKeys.length > 0
-      ) {
-        await kv.mdel(
-          facilitatorKeys
-        );
-      }
-
-      if (
-        participantKeys.length > 0
-      ) {
-        await kv.mdel(
-          participantKeys
-        );
-      }
-
-      console.log(
-        "[cleanup] Cleanup completed successfully."
-      );
-
-      return c.json({
-        success: true,
-
-        deleted: {
-          journeys:
-            journeyKeys.length,
-
-          sessions:
-            sessionKeys.length,
-
-          boards:
-            boardKeys.length,
-
-          facilitatorIndexes:
-            facilitatorKeys.length,
-
-          participantIndexes:
-            participantKeys.length,
-        },
-
-        authUsersDeleted: 0,
-      });
-    } catch (e) {
-      console.error(
-        "[cleanup] Cleanup error:",
-        e
-      );
-
-      return c.json(
-        {
-          success: false,
-          error:
-            String(e),
-        },
-        500
-      );
-    }
+        role:
+          userData?.role ||
+          user.role,
+      },
+    });
   }
 );
 
@@ -1989,45 +2035,48 @@ app.post(
   `${P}/journeys`,
   async (c) => {
     try {
+      const auth =
+        await requireRole(
+          c,
+          "facilitator"
+        );
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const {
         title,
         description,
         facilitatorId,
         facilitatorEmail,
-        sessionNumber,
-      } = await c.req.json();
+      } =
+        await c.req.json();
 
-      if (
-        !title ||
-        !facilitatorId
-      ) {
+      if (!title) {
         return c.json(
           {
             error:
-              "Missing required fields",
+              "Journey title is required.",
           },
           400
         );
       }
 
-      const selectedSessionNumber =
-        Number(
-          sessionNumber
-        ) || 1;
+      const authenticatedFacilitatorId =
+        auth.user.id;
 
       if (
-        !Number.isInteger(
-          selectedSessionNumber
-        ) ||
-        selectedSessionNumber < 1 ||
-        selectedSessionNumber > 4
+        facilitatorId &&
+        facilitatorId !==
+          authenticatedFacilitatorId
       ) {
         return c.json(
           {
             error:
-              "Session number must be between 1 and 4",
+              "Facilitator identity does not match the authenticated user.",
           },
-          400
+          403
         );
       }
 
@@ -2035,52 +2084,35 @@ app.post(
         crypto.randomUUID();
 
       const sessionIds = {
-        1: crypto.randomUUID(),
-        2: crypto.randomUUID(),
-        3: crypto.randomUUID(),
-        4: crypto.randomUUID(),
+        1:
+          crypto.randomUUID(),
+        2:
+          crypto.randomUUID(),
+        3:
+          crypto.randomUUID(),
+        4:
+          crypto.randomUUID(),
       };
 
       const sessions =
-        [1, 2, 3, 4].map(
-          (number) => ({
+        SESSION_NUMBERS.map(
+          (
+            number
+          ) => ({
             id:
               sessionIds[
                 number as
-                  | 1
-                  | 2
-                  | 3
-                  | 4
+                  1 | 2 | 3 | 4
               ],
 
             number,
 
             status:
-              number ===
-              selectedSessionNumber
-                ? "available"
-                : "locked",
+              number === 1
+                ? "available" as SessionStatus
+                : "locked" as SessionStatus,
           })
         );
-
-      const selectedSession =
-        sessions.find(
-          (session) =>
-            session.number ===
-            selectedSessionNumber
-        );
-
-      if (
-        !selectedSession
-      ) {
-        return c.json(
-          {
-            error:
-              "Unable to create selected session",
-          },
-          500
-        );
-      }
 
       const journey = {
         id:
@@ -2093,10 +2125,12 @@ app.post(
           description?.trim() ||
           "",
 
-        facilitatorId,
+        facilitatorId:
+          authenticatedFacilitatorId,
 
         facilitatorEmail:
           facilitatorEmail ||
+          auth.user.email ||
           "",
 
         participantEmail:
@@ -2108,10 +2142,10 @@ app.post(
           "active",
 
         sessionId:
-          selectedSession.id,
+          sessionIds[1],
 
         startingSessionNumber:
-          selectedSessionNumber,
+          1,
 
         sessions,
 
@@ -2119,13 +2153,13 @@ app.post(
           new Date().toISOString(),
       };
 
-      await kv.set(
-        `journey:${journeyId}`,
+      await saveJourney(
         journey
       );
 
       for (
-        const session of sessions
+        const session of
+        sessions
       ) {
         await kv.set(
           `session:${session.id}`,
@@ -2150,15 +2184,18 @@ app.post(
 
         await kv.set(
           `board:${session.id}`,
-          session.number === 1
-            ? EMPTY_S1_BOARD
-            : EMPTY_S2_BOARD
+          getEmptyBoard(
+            session.number
+          )
         );
       }
 
+      const facilitatorKey =
+        `facilitator:${authenticatedFacilitatorId}:journeys`;
+
       const facilitatorJourneys: string[] =
         (await kv.get(
-          `facilitator:${facilitatorId}:journeys`
+          facilitatorKey
         )) || [];
 
       if (
@@ -2171,43 +2208,40 @@ app.post(
         );
 
         await kv.set(
-          `facilitator:${facilitatorId}:journeys`,
+          facilitatorKey,
           facilitatorJourneys
         );
       }
 
       return c.json({
         success: true,
-
         journey,
-
         sessionId:
-          selectedSession.id,
+          sessionIds[1],
 
         session: {
           id:
-            selectedSession.id,
+            sessionIds[1],
 
-          number:
-            selectedSession.number,
+          number: 1,
 
           label:
-            `Session ${selectedSession.number}`,
+            "Session 1",
 
           status:
-            selectedSession.status,
+            "available",
         },
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Create journey error:",
-        e
+        "[journeys/create]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -2223,46 +2257,66 @@ app.get(
   `${P}/journeys/facilitator/:userId`,
   async (c) => {
     try {
-      const userId =
+      const auth =
+        await requireRole(
+          c,
+          "facilitator"
+        );
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const requestedUserId =
         c.req.param(
           "userId"
         );
 
+      if (
+        requestedUserId !==
+        auth.user.id
+      ) {
+        return c.json(
+          {
+            success: false,
+            error:
+              "You can only view your own journeys.",
+          },
+          403
+        );
+      }
+
+      const key =
+        `facilitator:${auth.user.id}:journeys`;
+
       const journeyIds: string[] =
         (await kv.get(
-          `facilitator:${userId}:journeys`
+          key
         )) || [];
 
-      console.log(
-        `[facilitator-journeys] userId=${userId} indexedCount=${journeyIds.length}`
-      );
+      const journeys: any[] =
+        [];
 
-      const journeys = [];
+      const validIds: string[] =
+        [];
 
       for (
-        const id of journeyIds
+        const id of
+        journeyIds
       ) {
         let journey =
-          await kv.get(
-            `journey:${id}`
+          await getJourney(
+            id
           );
 
         if (!journey) {
-          console.log(
-            `[facilitator-journeys] journey ${id} missing`
-          );
-
           continue;
         }
 
         if (
           journey.facilitatorId !==
-          userId
+          auth.user.id
         ) {
-          console.log(
-            `[facilitator-journeys] rejected journey ${id}`
-          );
-
           continue;
         }
 
@@ -2274,24 +2328,51 @@ app.get(
         journeys.push(
           journey
         );
+
+        validIds.push(
+          id
+        );
+      }
+
+      if (
+        validIds.length !==
+        journeyIds.length
+      ) {
+        await kv.set(
+          key,
+          validIds
+        );
       }
 
       return c.json({
         success: true,
 
         journeys:
-          journeys.reverse(),
+          journeys.sort(
+            (
+              a,
+              b
+            ) =>
+              new Date(
+                b.createdAt ||
+                  0
+              ).getTime() -
+              new Date(
+                a.createdAt ||
+                  0
+              ).getTime()
+          ),
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Facilitator journeys error:",
-        e
+        "[journeys/facilitator]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -2307,7 +2388,17 @@ app.get(
   `${P}/journeys/participant/:email`,
   async (c) => {
     try {
-      const email =
+      const auth =
+        await requireRole(
+          c,
+          "participant"
+        );
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const requestedEmail =
         decodeURIComponent(
           c.req.param(
             "email"
@@ -2316,50 +2407,61 @@ app.get(
           .trim()
           .toLowerCase();
 
+      const authenticatedEmail =
+        String(
+          auth.user.email ||
+            ""
+        )
+          .trim()
+          .toLowerCase();
+
+      if (
+        requestedEmail !==
+        authenticatedEmail
+      ) {
+        return c.json(
+          {
+            success: false,
+            error:
+              "You can only view journeys assigned to your own account.",
+          },
+          403
+        );
+      }
+
+      const key =
+        `participant_email:${authenticatedEmail}:journeys`;
+
       const journeyIds: string[] =
         (await kv.get(
-          `participant_email:${email}:journeys`
+          key
         )) || [];
 
-      const journeys = [];
+      const journeys: any[] =
+        [];
 
-      const validJourneyIds: string[] =
+      const validIds: string[] =
         [];
 
       for (
-        const id of journeyIds
+        const id of
+        journeyIds
       ) {
         let journey =
-          await kv.get(
-            `journey:${id}`
+          await getJourney(
+            id
           );
 
         if (!journey) {
           continue;
         }
 
-        const isLinked =
-          (
-            journey.participants ||
-            []
-          ).some(
-            (p: any) =>
-              String(
-                p.email
-              )
-                .trim()
-                .toLowerCase() ===
-              email
-          ) ||
-          String(
-            journey.participantEmail ||
-              ""
+        if (
+          !isParticipantLinked(
+            journey,
+            authenticatedEmail
           )
-            .trim()
-            .toLowerCase() ===
-          email;
-
-        if (!isLinked) {
+        ) {
           continue;
         }
 
@@ -2372,37 +2474,46 @@ app.get(
           journey
         );
 
-        validJourneyIds.push(
+        validIds.push(
           id
         );
       }
 
-      if (
-        validJourneyIds.length !==
-        journeyIds.length
-      ) {
-        await kv.set(
-          `participant_email:${email}:journeys`,
-          validJourneyIds
-        );
-      }
+      // Remove stale participant journey references.
+      await kv.set(
+        key,
+        validIds
+      );
 
       return c.json({
         success: true,
 
         journeys:
-          journeys.reverse(),
+          journeys.sort(
+            (
+              a,
+              b
+            ) =>
+              new Date(
+                b.createdAt ||
+                  0
+              ).getTime() -
+              new Date(
+                a.createdAt ||
+                  0
+              ).getTime()
+          ),
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Participant journeys error:",
-        e
+        "[journeys/participant]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -2418,21 +2529,58 @@ app.get(
   `${P}/journeys/:id`,
   async (c) => {
     try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const journeyId =
-        c.req.param("id");
+        c.req.param(
+          "id"
+        );
 
       let journey =
-        await kv.get(
-          `journey:${journeyId}`
+        await getJourney(
+          journeyId
         );
 
       if (!journey) {
         return c.json(
           {
             error:
-              "Journey not found",
+              "Journey not found.",
           },
           404
+        );
+      }
+
+      const isOwner =
+        auth.user.role ===
+          "facilitator" &&
+        journey.facilitatorId ===
+          auth.user.id;
+
+      const isParticipant =
+        auth.user.role ===
+          "participant" &&
+        isParticipantLinked(
+          journey,
+          auth.user.email ||
+            ""
+        );
+
+      if (
+        !isOwner &&
+        !isParticipant
+      ) {
+        return c.json(
+          {
+            error:
+              "You do not have access to this journey.",
+          },
+          403
         );
       }
 
@@ -2445,16 +2593,16 @@ app.get(
         success: true,
         journey,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Get journey error:",
-        e
+        "[journeys/get]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -2463,47 +2611,59 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JOURNEYS — DELETE SINGLE
+// JOURNEYS — DELETE
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.delete(
   `${P}/journeys/:id`,
   async (c) => {
     try {
-      const journeyId =
-        c.req.param("id");
-
-      if (!journeyId) {
-        return c.json(
-          {
-            error:
-              "Journey ID is required",
-          },
-          400
+      const auth =
+        await requireRole(
+          c,
+          "facilitator"
         );
+
+      if (!auth.ok) {
+        return auth.response;
       }
 
-      console.log(
-        `[delete-journey] Starting deletion for ${journeyId}`
-      );
+      const journeyId =
+        c.req.param(
+          "id"
+        );
 
       const journey =
-        await kv.get(
-          `journey:${journeyId}`
+        await getJourney(
+          journeyId
         );
 
       if (!journey) {
         return c.json(
           {
             error:
-              "Journey not found",
+              "Journey not found.",
           },
           404
         );
       }
 
+      if (
+        journey.facilitatorId !==
+        auth.user.id
+      ) {
+        return c.json(
+          {
+            error:
+              "You can only delete your own journeys.",
+          },
+          403
+        );
+      }
+
       let sessions =
-        journey.sessions || [];
+        journey.sessions ||
+        [];
 
       if (
         sessions.length === 0 &&
@@ -2521,28 +2681,29 @@ app.delete(
       const sessionIds =
         sessions
           .map(
-            (session: any) =>
+            (
+              session: any
+            ) =>
               session.id
           )
           .filter(
-            (id: string) =>
-              Boolean(id)
+            Boolean
           );
 
-      let deletedBoards = 0;
+      let deletedBoards =
+        0;
+
+      let deletedSessions =
+        0;
 
       for (
         const sessionId of
         sessionIds
       ) {
-        const board =
+        if (
           await kv.get(
             `board:${sessionId}`
-          );
-
-        if (
-          board !== undefined &&
-          board !== null
+          )
         ) {
           await kv.del(
             `board:${sessionId}`
@@ -2550,22 +2711,11 @@ app.delete(
 
           deletedBoards++;
         }
-      }
-
-      let deletedSessions = 0;
-
-      for (
-        const sessionId of
-        sessionIds
-      ) {
-        const session =
-          await kv.get(
-            `session:${sessionId}`
-          );
 
         if (
-          session !== undefined &&
-          session !== null
+          await kv.get(
+            `session:${sessionId}`
+          )
         ) {
           await kv.del(
             `session:${sessionId}`
@@ -2575,42 +2725,22 @@ app.delete(
         }
       }
 
-      let facilitatorIndexUpdated =
-        false;
+      const facilitatorKey =
+        `facilitator:${auth.user.id}:journeys`;
 
-      if (
-        journey.facilitatorId
-      ) {
-        const facilitatorKey =
-          `facilitator:${journey.facilitatorId}:journeys`;
+      const facilitatorJourneys: string[] =
+        (await kv.get(
+          facilitatorKey
+        )) || [];
 
-        const facilitatorJourneys: string[] =
-          (await kv.get(
-            facilitatorKey
-          )) || [];
-
-        const filtered =
-          facilitatorJourneys.filter(
-            (id: string) =>
-              id !== journeyId
-          );
-
-        if (
-          filtered.length !==
-          facilitatorJourneys.length
-        ) {
-          await kv.set(
-            facilitatorKey,
-            filtered
-          );
-
-          facilitatorIndexUpdated =
-            true;
-        }
-      }
-
-      let participantIndexesUpdated =
-        0;
+      await kv.set(
+        facilitatorKey,
+        facilitatorJourneys.filter(
+          (id) =>
+            id !==
+            journeyId
+        )
+      );
 
       const participantEmails =
         new Set<string>();
@@ -2657,72 +2787,42 @@ app.delete(
             participantKey
           )) || [];
 
-        const filtered =
+        await kv.set(
+          participantKey,
           participantJourneys.filter(
-            (id: string) =>
-              id !== journeyId
-          );
-
-        if (
-          filtered.length !==
-          participantJourneys.length
-        ) {
-          await kv.set(
-            participantKey,
-            filtered
-          );
-
-          participantIndexesUpdated++;
-        }
+            (id) =>
+              id !==
+              journeyId
+          )
+        );
       }
 
       await kv.del(
         `journey:${journeyId}`
       );
 
-      console.log(
-        `[delete-journey] Successfully deleted ${journeyId}`
-      );
-
       return c.json({
         success: true,
 
-        message:
-          "Journey deleted successfully.",
-
         deleted: {
           journey: 1,
-
           sessions:
             deletedSessions,
-
           boards:
             deletedBoards,
-
-          facilitatorIndex:
-            facilitatorIndexUpdated
-              ? 1
-              : 0,
-
-          participantIndexes:
-            participantIndexesUpdated,
         },
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "[delete-journey] Error:",
-        e
+        "[journeys/delete]",
+        error
       );
 
       return c.json(
         {
           success: false,
-
           error:
-            "Failed to delete journey.",
-
-          details:
-            String(e),
+            String(error),
         },
         500
       );
@@ -2738,12 +2838,25 @@ app.post(
   `${P}/journeys/:id/link`,
   async (c) => {
     try {
+      const auth =
+        await requireRole(
+          c,
+          "facilitator"
+        );
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const journeyId =
-        c.req.param("id");
+        c.req.param(
+          "id"
+        );
 
       const {
         participantEmail,
-      } = await c.req.json();
+      } =
+        await c.req.json();
 
       if (
         !participantEmail
@@ -2751,24 +2864,37 @@ app.post(
         return c.json(
           {
             error:
-              "Participant email required",
+              "Participant email required.",
           },
           400
         );
       }
 
       let journey =
-        await kv.get(
-          `journey:${journeyId}`
+        await getJourney(
+          journeyId
         );
 
       if (!journey) {
         return c.json(
           {
             error:
-              "Journey not found",
+              "Journey not found.",
           },
           404
+        );
+      }
+
+      if (
+        journey.facilitatorId !==
+        auth.user.id
+      ) {
+        return c.json(
+          {
+            error:
+              "You can only modify your own journeys.",
+          },
+          403
         );
       }
 
@@ -2782,16 +2908,21 @@ app.post(
           .trim()
           .toLowerCase();
 
-      if (!journey.participants) {
+      if (
+        !journey.participants
+      ) {
         journey.participants =
           [];
       }
 
       if (
         journey.participants.some(
-          (p: any) =>
+          (
+            participant: any
+          ) =>
             String(
-              p.email
+              participant.email ||
+                ""
             )
               .trim()
               .toLowerCase() ===
@@ -2801,7 +2932,7 @@ app.post(
         return c.json(
           {
             error:
-              `${email} is already linked to this journey`,
+              `${email} is already linked to this journey.`,
           },
           400
         );
@@ -2819,14 +2950,16 @@ app.post(
       journey.participantEmail =
         email;
 
-      await kv.set(
-        `journey:${journeyId}`,
+      await saveJourney(
         journey
       );
 
+      const participantKey =
+        `participant_email:${email}:journeys`;
+
       const participantJourneys: string[] =
         (await kv.get(
-          `participant_email:${email}:journeys`
+          participantKey
         )) || [];
 
       if (
@@ -2839,14 +2972,10 @@ app.post(
         );
 
         await kv.set(
-          `participant_email:${email}:journeys`,
+          participantKey,
           participantJourneys
         );
       }
-
-      // ─────────────────────────────────────────
-      // INVITATION EMAIL
-      // ─────────────────────────────────────────
 
       const invitationEmail =
         await sendEmail({
@@ -2877,12 +3006,11 @@ app.post(
 
               <div style="
                 background:#F7F3EE;
-                border:1px solid #EBE2D6;
+                border:1px solid #EBE2E6;
                 border-radius:14px;
                 padding:20px;
                 margin:24px 0;
               ">
-
                 <div style="
                   font-size:12px;
                   color:#6B625D;
@@ -2916,7 +3044,6 @@ app.post(
                     `
                     : ""
                 }
-
               </div>
 
               <p style="
@@ -2953,44 +3080,35 @@ app.post(
                 line-height:1.7;
                 color:#6B625D;
               ">
-                We look forward to
-                accompanying you through
-                your journey.
-              </p>
-
-              <p style="
-                margin-top:28px;
-                font-size:15px;
-              ">
                 Warmly,<br>
                 <strong>Zuva Life</strong>
               </p>
             `),
         });
 
-      if (
-        !invitationEmail.success
-      ) {
-        console.warn(
-          "[journey-link] Invitation email failed:",
-          invitationEmail.error
-        );
-      }
-
       return c.json({
         success: true,
+
+        emailSent:
+          invitationEmail.success,
+
+        emailError:
+          invitationEmail.success
+            ? undefined
+            : invitationEmail.error,
+
         journey,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Link participant error:",
-        e
+        "[journeys/link]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -3006,34 +3124,105 @@ app.get(
   `${P}/sessions/:id`,
   async (c) => {
     try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const id =
-        c.req.param("id");
+        c.req.param(
+          "id"
+        );
 
       const session =
-        await kv.get(
-          `session:${id}`
+        await getSession(
+          id
         );
 
       if (!session) {
         return c.json(
           {
             error:
-              "Session not found",
+              "Session not found.",
           },
           404
         );
       }
 
       let journey =
-        await kv.get(
-          `journey:${session.journeyId}`
+        await getJourney(
+          session.journeyId
         );
 
-      if (journey) {
-        journey =
-          await ensureJourneySessions(
-            journey
-          );
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found.",
+          },
+          404
+        );
+      }
+
+      journey =
+        await ensureJourneySessions(
+          journey
+        );
+
+      const facilitatorAccess =
+        auth.user.role ===
+          "facilitator" &&
+        journey.facilitatorId ===
+          auth.user.id;
+
+      const participantAccess =
+        auth.user.role ===
+          "participant" &&
+        isParticipantLinked(
+          journey,
+          auth.user.email ||
+            ""
+        );
+
+      if (
+        !facilitatorAccess &&
+        !participantAccess
+      ) {
+        return c.json(
+          {
+            error:
+              "You do not have access to this session.",
+          },
+          403
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // STRICT PARTICIPANT ACCESS
+      // ─────────────────────────────────────────
+
+      if (
+        auth.user.role ===
+          "participant" &&
+        !canParticipantOpenSession(
+          journey,
+          session
+        )
+      ) {
+        return c.json(
+          {
+            success: false,
+
+            error:
+              "This session is locked. The facilitator must complete the previous session and enable this session before you can access it.",
+
+            code:
+              "SESSION_LOCKED",
+          },
+          403
+        );
       }
 
       const previousBoards: Record<
@@ -3042,12 +3231,13 @@ app.get(
       > = {};
 
       if (
-        journey?.sessions &&
-        session.sessionNumber > 1
+        session.sessionNumber >
+        1
       ) {
         for (
           const sessionItem of
-          journey.sessions
+          journey.sessions ||
+          []
         ) {
           if (
             sessionItem.number <
@@ -3061,7 +3251,8 @@ app.get(
             if (board) {
               previousBoards[
                 sessionItem.number
-              ] = board;
+              ] =
+                board;
             }
           }
         }
@@ -3076,16 +3267,16 @@ app.get(
 
         previousBoards,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Get session error:",
-        e
+        "[sessions/get]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -3101,42 +3292,131 @@ app.get(
   `${P}/sessions/:id/board`,
   async (c) => {
     try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const id =
-        c.req.param("id");
+        c.req.param(
+          "id"
+        );
+
+      const session =
+        await getSession(
+          id
+        );
+
+      if (!session) {
+        return c.json(
+          {
+            error:
+              "Session not found.",
+          },
+          404
+        );
+      }
+
+      let journey =
+        await getJourney(
+          session.journeyId
+        );
+
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found.",
+          },
+          404
+        );
+      }
+
+      journey =
+        await ensureJourneySessions(
+          journey
+        );
+
+      const facilitatorAccess =
+        auth.user.role ===
+          "facilitator" &&
+        journey.facilitatorId ===
+          auth.user.id;
+
+      const participantAccess =
+        auth.user.role ===
+          "participant" &&
+        isParticipantLinked(
+          journey,
+          auth.user.email ||
+            ""
+        );
+
+      if (
+        !facilitatorAccess &&
+        !participantAccess
+      ) {
+        return c.json(
+          {
+            error:
+              "You do not have access to this board.",
+          },
+          403
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // STRICT PARTICIPANT ACCESS
+      // ─────────────────────────────────────────
+
+      if (
+        auth.user.role ===
+          "participant" &&
+        !canParticipantOpenSession(
+          journey,
+          session
+        )
+      ) {
+        return c.json(
+          {
+            error:
+              "This session is locked. The facilitator must enable it before you can access it.",
+
+            code:
+              "SESSION_LOCKED",
+          },
+          403
+        );
+      }
 
       const state =
         await kv.get(
           `board:${id}`
         );
 
-      const session =
-        await kv.get(
-          `session:${id}`
-        );
-
-      const defaultBoard =
-        session?.sessionNumber ===
-        1
-          ? EMPTY_S1_BOARD
-          : EMPTY_S2_BOARD;
-
       return c.json({
         success: true,
 
         state:
           state ||
-          defaultBoard,
+          getEmptyBoard(
+            Number(
+              session.sessionNumber
+            )
+          ),
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Get board error:",
-        e
+        "[sessions/board/get]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -3145,43 +3425,1211 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — REPORT PDF
+// SESSIONS — SAVE BOARD
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.get(
-  `${P}/sessions/:id/report`,
+app.put(
+  `${P}/sessions/:id/board`,
   async (c) => {
     try {
-      const sessionId =
-        c.req.param("id");
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const id =
+        c.req.param(
+          "id"
+        );
 
       const session =
-        await kv.get(
-          `session:${sessionId}`
+        await getSession(
+          id
         );
 
       if (!session) {
         return c.json(
           {
             error:
-              "Session not found",
+              "Session not found.",
           },
           404
         );
       }
 
-      const journey =
-        await kv.get(
-          `journey:${session.journeyId}`
+      let journey =
+        await getJourney(
+          session.journeyId
         );
 
       if (!journey) {
         return c.json(
           {
             error:
-              "Journey not found",
+              "Journey not found.",
           },
           404
+        );
+      }
+
+      journey =
+        await ensureJourneySessions(
+          journey
+        );
+
+      const facilitatorAccess =
+        auth.user.role ===
+          "facilitator" &&
+        journey.facilitatorId ===
+          auth.user.id;
+
+      const participantAccess =
+        auth.user.role ===
+          "participant" &&
+        isParticipantLinked(
+          journey,
+          auth.user.email ||
+            ""
+        );
+
+      if (
+        !facilitatorAccess &&
+        !participantAccess
+      ) {
+        return c.json(
+          {
+            error:
+              "You do not have permission to edit this board.",
+          },
+          403
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // STRICT PARTICIPANT ACCESS
+      // ─────────────────────────────────────────
+
+      if (
+        auth.user.role ===
+          "participant" &&
+        !canParticipantOpenSession(
+          journey,
+          session
+        )
+      ) {
+        return c.json(
+          {
+            error:
+              "This session is locked.",
+            code:
+              "SESSION_LOCKED",
+          },
+          403
+        );
+      }
+
+      const {
+        state,
+      } =
+        await c.req.json();
+
+      if (!state) {
+        return c.json(
+          {
+            error:
+              "Board state is required.",
+          },
+          400
+        );
+      }
+
+      await kv.set(
+        `board:${id}`,
+        {
+          ...state,
+
+          updatedAt:
+            new Date().toISOString(),
+        }
+      );
+
+      if (
+        state.currentStep
+      ) {
+        session.currentStep =
+          state.currentStep;
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        await saveSession(
+          session
+        );
+      }
+
+      return c.json({
+        success: true,
+      });
+    } catch (error) {
+      console.error(
+        "[sessions/board/save]",
+        error
+      );
+
+      return c.json(
+        {
+          error:
+            String(error),
+        },
+        500
+      );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSIONS — START / STATUS
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.put(
+  `${P}/sessions/:id/status`,
+  async (c) => {
+    try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const sessionId =
+        c.req.param(
+          "id"
+        );
+
+      const {
+        status,
+      } =
+        await c.req.json();
+
+      const session =
+        await getSession(
+          sessionId
+        );
+
+      if (!session) {
+        return c.json(
+          {
+            error:
+              "Session not found.",
+          },
+          404
+        );
+      }
+
+      // IMPORTANT:
+      // This must be `let`, because ensureJourneySessions()
+      // may return an updated journey object.
+      let journey =
+        await getJourney(
+          session.journeyId
+        );
+
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found.",
+          },
+          404
+        );
+      }
+
+      journey =
+        await ensureJourneySessions(
+          journey
+        );
+
+      const journeySession =
+        getSessionFromJourney(
+          journey,
+          sessionId
+        );
+
+      if (!journeySession) {
+        return c.json(
+          {
+            error:
+              "Session is not part of this journey.",
+          },
+          400
+        );
+      }
+
+      const currentStatus:
+        SessionStatus =
+        session.status;
+
+      // ─────────────────────────────────────────
+      // PARTICIPANT STATUS RULES
+      // ─────────────────────────────────────────
+
+      if (
+        auth.user.role ===
+        "participant"
+      ) {
+        if (
+          !isParticipantLinked(
+            journey,
+            auth.user.email ||
+              ""
+          )
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "You are not linked to this journey.",
+            },
+            403
+          );
+        }
+
+        // A participant can NEVER modify a locked session.
+        if (
+          currentStatus ===
+          "locked"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "This session is locked. The facilitator must enable it first.",
+              code:
+                "SESSION_LOCKED",
+            },
+            403
+          );
+        }
+
+        // A participant can NEVER modify a completed session.
+        // Completed sessions are review-only.
+        if (
+          currentStatus ===
+          "completed"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "This session has already been completed. Only the facilitator can change its status.",
+              code:
+                "FACILITATOR_ONLY",
+            },
+            403
+          );
+        }
+
+        // The previous session must have been completed.
+        // This prevents stale/malformed session records from
+        // allowing participants to skip ahead.
+        if (
+          !canParticipantOpenSession(
+            journey,
+            session
+          )
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "The previous session must be completed and this session must be enabled by the facilitator first.",
+              code:
+                "SESSION_LOCKED",
+            },
+            403
+          );
+        }
+
+        // Participants can ONLY start/continue a session.
+        if (
+          status !==
+          "in_progress"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "Participants can only start or continue an enabled session.",
+              code:
+                "FACILITATOR_ONLY",
+            },
+            403
+          );
+        }
+
+        // Available -> In Progress
+        // In Progress -> In Progress
+        session.status =
+          "in_progress";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        journeySession.status =
+          "in_progress";
+
+        await saveSession(
+          session
+        );
+
+        await saveJourney(
+          journey
+        );
+
+        return c.json({
+          success: true,
+          journey,
+          session,
+        });
+      }
+
+      // ─────────────────────────────────────────
+      // FACILITATOR RULES
+      // ─────────────────────────────────────────
+
+      if (
+        auth.user.role !==
+        "facilitator"
+      ) {
+        return c.json(
+          {
+            error:
+              "Invalid user role.",
+          },
+          403
+        );
+      }
+
+      if (
+        journey.facilitatorId !==
+        auth.user.id
+      ) {
+        return c.json(
+          {
+            error:
+              "You can only manage your own journeys.",
+          },
+          403
+        );
+      }
+
+      const requestedStatus:
+        SessionStatus =
+        status;
+
+      if (
+        ![
+          "available",
+          "in_progress",
+          "completed",
+          "locked",
+        ].includes(
+          requestedStatus
+        )
+      ) {
+        return c.json(
+          {
+            error:
+              "Invalid session status.",
+          },
+          400
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // FACILITATOR ENABLES SESSION
+      // ─────────────────────────────────────────
+
+      if (
+        requestedStatus ===
+        "available"
+      ) {
+        const sessionNumber =
+          Number(
+            session.sessionNumber
+          );
+
+        // Session 1 can be made available normally.
+        //
+        // Session 2/3/4 require the previous session
+        // to be completed first.
+        if (
+          sessionNumber >
+          1
+        ) {
+          const previousSession =
+            (
+              journey.sessions ||
+              []
+            ).find(
+              (item: any) =>
+                Number(
+                  item.number
+                ) ===
+                sessionNumber -
+                  1
+            );
+
+          if (
+            !previousSession ||
+            previousSession.status !==
+              "completed"
+          ) {
+            return c.json(
+              {
+                success: false,
+
+                error:
+                  `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be enabled.`,
+
+                code:
+                  "PREVIOUS_SESSION_NOT_COMPLETED",
+              },
+              400
+            );
+          }
+        }
+
+        session.status =
+          "available";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        journeySession.status =
+          "available";
+
+        await saveSession(
+          session
+        );
+
+        await saveJourney(
+          journey
+        );
+
+        return c.json({
+          success: true,
+          journey,
+          session,
+        });
+      }
+
+      // ─────────────────────────────────────────
+      // FACILITATOR STARTS SESSION
+      // ─────────────────────────────────────────
+
+      if (
+        requestedStatus ===
+        "in_progress"
+      ) {
+        if (
+          session.status ===
+          "locked"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "Session is locked. Enable it before starting.",
+              code:
+                "SESSION_LOCKED",
+            },
+            403
+          );
+        }
+
+        // For Sessions 2–4, verify the previous
+        // session is completed before starting.
+        const sessionNumber =
+          Number(
+            session.sessionNumber
+          );
+
+        if (
+          sessionNumber >
+          1
+        ) {
+          const previousSession =
+            (
+              journey.sessions ||
+              []
+            ).find(
+              (item: any) =>
+                Number(
+                  item.number
+                ) ===
+                sessionNumber -
+                  1
+            );
+
+          if (
+            !previousSession ||
+            previousSession.status !==
+              "completed"
+          ) {
+            return c.json(
+              {
+                success: false,
+
+                error:
+                  `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be started.`,
+
+                code:
+                  "PREVIOUS_SESSION_NOT_COMPLETED",
+              },
+              400
+            );
+          }
+        }
+
+        session.status =
+          "in_progress";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        journeySession.status =
+          "in_progress";
+
+        await saveSession(
+          session
+        );
+
+        await saveJourney(
+          journey
+        );
+
+        return c.json({
+          success: true,
+          journey,
+          session,
+        });
+      }
+
+      // ─────────────────────────────────────────
+      // FACILITATOR COMPLETES SESSION
+      // ─────────────────────────────────────────
+
+      if (
+        requestedStatus ===
+        "completed"
+      ) {
+        if (
+          session.status ===
+          "locked"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "A locked session cannot be completed.",
+            },
+            403
+          );
+        }
+
+        session.status =
+          "completed";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        journeySession.status =
+          "completed";
+
+        const sessionNumber =
+          Number(
+            session.sessionNumber
+          );
+
+        // IMPORTANT:
+        //
+        // Completing a session does NOT automatically
+        // unlock the next session.
+        //
+        // The facilitator must explicitly enable
+        // the next session.
+        if (
+          sessionNumber ===
+          4
+        ) {
+          journey.status =
+            "completed";
+        } else {
+          journey.status =
+            "active";
+        }
+
+        await saveSession(
+          session
+        );
+
+        await saveJourney(
+          journey
+        );
+
+        // ─────────────────────────────────────
+        // REPORT EMAIL
+        // ─────────────────────────────────────
+
+        let reportEmailResult:
+          any = null;
+
+        const participantEmail =
+          journey.participantEmail ||
+          journey.participants?.[0]
+            ?.email;
+
+        if (
+          participantEmail
+        ) {
+          try {
+            const board =
+              (await kv.get(
+                `board:${sessionId}`
+              )) || {};
+
+            const report =
+              await buildSessionReport(
+                session,
+                journey,
+                board
+              );
+
+            const pdf =
+              createPdf(
+                report.lines
+              );
+
+            const base64 =
+              uint8ToBase64(
+                pdf
+              );
+
+            reportEmailResult =
+              await sendEmail({
+                to:
+                  participantEmail,
+
+                subject:
+                  `Your Zest Journey Session ${session.sessionNumber} Report`,
+
+                html:
+                  emailLayout(`
+                    <h1 style="
+                      margin:0 0 16px;
+                      color:#4A1C5C;
+                      font-size:28px;
+                    ">
+                      Your session is complete
+                    </h1>
+
+                    <p style="
+                      font-size:16px;
+                      line-height:1.7;
+                    ">
+                      Congratulations on
+                      completing
+                      <strong>
+                        Session ${
+                          session.sessionNumber
+                        }
+                        —
+                        ${escapeHtml(
+                          report.sessionName
+                        )}
+                      </strong>.
+                    </p>
+
+                    <p style="
+                      font-size:16px;
+                      line-height:1.7;
+                    ">
+                      Your personal session
+                      report is attached to
+                      this email.
+                    </p>
+
+                    <div style="
+                      margin:28px 0;
+                      padding:20px;
+                      background:#F7F3EE;
+                      border-radius:14px;
+                      border:1px solid #EBE2E6;
+                    ">
+                      <strong style="
+                        color:#4A1C5C;
+                      ">
+                        ${escapeHtml(
+                          journey.title
+                        )}
+                      </strong>
+
+                      <br>
+
+                      <span style="
+                        color:#6B625D;
+                      ">
+                        Session ${
+                          session.sessionNumber
+                        }
+                        —
+                        ${escapeHtml(
+                          report.sessionName
+                        )}
+                      </span>
+                    </div>
+
+                    <p style="
+                      font-size:15px;
+                      line-height:1.7;
+                      color:#6B625D;
+                    ">
+                      Keep this report as
+                      a reflection of the
+                      work you've done and
+                      the insights you've
+                      uncovered.
+                    </p>
+
+                    <p style="
+                      margin-top:28px;
+                    ">
+                      Warmly,<br>
+                      <strong>Zuva Life</strong>
+                    </p>
+                  `),
+
+                attachments: [
+                  {
+                    filename:
+                      report.filename,
+
+                    content:
+                      base64,
+
+                    content_type:
+                      "application/pdf",
+                  },
+                ],
+              });
+          } catch (
+            emailError
+          ) {
+            reportEmailResult = {
+              success:
+                false,
+
+              error:
+                String(
+                  emailError
+                ),
+            };
+          }
+        } else {
+          reportEmailResult = {
+            success:
+              false,
+
+            error:
+              "No participant email found for this journey.",
+          };
+        }
+
+        return c.json({
+          success: true,
+
+          journey,
+
+          session,
+
+          reportEmail: {
+            sent:
+              Boolean(
+                reportEmailResult?.success
+              ),
+
+            email:
+              participantEmail ||
+              null,
+
+            error:
+              reportEmailResult?.success
+                ? null
+                : reportEmailResult?.error ||
+                  "Report email was not sent.",
+          },
+        });
+      }
+
+      // ─────────────────────────────────────────
+      // FACILITATOR LOCK
+      // ─────────────────────────────────────────
+
+      if (
+        requestedStatus ===
+        "locked"
+      ) {
+        if (
+          session.status ===
+          "completed"
+        ) {
+          return c.json(
+            {
+              success: false,
+              error:
+                "A completed session cannot be locked again.",
+            },
+            400
+          );
+        }
+
+        session.status =
+          "locked";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        journeySession.status =
+          "locked";
+
+        await saveSession(
+          session
+        );
+
+        await saveJourney(
+          journey
+        );
+
+        return c.json({
+          success: true,
+          journey,
+          session,
+        });
+      }
+
+      return c.json(
+        {
+          success: false,
+          error:
+            "Unsupported session status operation.",
+        },
+        400
+      );
+    } catch (error) {
+      console.error(
+        "[sessions/status]",
+        error
+      );
+
+      return c.json(
+        {
+          success: false,
+          error:
+            String(error),
+        },
+        500
+      );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSIONS — FACILITATOR ENABLE NEXT SESSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post(
+  `${P}/journeys/:journeyId/sessions/:sessionNumber/enable`,
+  async (c) => {
+    try {
+      const auth =
+        await requireRole(
+          c,
+          "facilitator"
+        );
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const journeyId =
+        c.req.param(
+          "journeyId"
+        );
+
+      const sessionNumber =
+        normalizeSessionNumber(
+          c.req.param(
+            "sessionNumber"
+          )
+        );
+
+      if (
+        !sessionNumber
+      ) {
+        return c.json(
+          {
+            error:
+              "Invalid session number.",
+          },
+          400
+        );
+      }
+
+      let journey =
+        await getJourney(
+          journeyId
+        );
+
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found.",
+          },
+          404
+        );
+      }
+
+      if (
+        journey.facilitatorId !==
+        auth.user.id
+      ) {
+        return c.json(
+          {
+            error:
+              "You can only manage your own journeys.",
+          },
+          403
+        );
+      }
+
+      journey =
+        await ensureJourneySessions(
+          journey
+        );
+
+      const target =
+        journey.sessions.find(
+          (s: any) =>
+            Number(
+              s.number
+            ) ===
+            sessionNumber
+        );
+
+      if (!target) {
+        return c.json(
+          {
+            error:
+              "Session not found.",
+          },
+          404
+        );
+      }
+
+      if (
+        target.status ===
+        "completed"
+      ) {
+        return c.json(
+          {
+            error:
+              "This session is already completed.",
+          },
+          400
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // STRICT PREVIOUS-SESSION REQUIREMENT
+      // ─────────────────────────────────────────
+
+      if (
+        sessionNumber >
+        1
+      ) {
+        const previous =
+          journey.sessions.find(
+            (s: any) =>
+              Number(
+                s.number
+              ) ===
+              sessionNumber -
+                1
+          );
+
+        if (
+          !previous ||
+          previous.status !==
+            "completed"
+        ) {
+          return c.json(
+            {
+              success: false,
+
+              error:
+                `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be enabled.`,
+
+              code:
+                "PREVIOUS_SESSION_NOT_COMPLETED",
+            },
+            400
+          );
+        }
+      }
+
+      target.status =
+        "available";
+
+      const session =
+        await getSession(
+          target.id
+        );
+
+      if (session) {
+        session.status =
+          "available";
+
+        session.updatedAt =
+          new Date().toISOString();
+
+        await saveSession(
+          session
+        );
+      }
+
+      await saveJourney(
+        journey
+      );
+
+      return c.json({
+        success: true,
+
+        journey,
+
+        session:
+          session ||
+          target,
+      });
+    } catch (error) {
+      console.error(
+        "[sessions/enable]",
+        error
+      );
+
+      return c.json(
+        {
+          success: false,
+          error:
+            String(error),
+        },
+        500
+      );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION REPORT — DOWNLOAD
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get(
+  `${P}/sessions/:id/report`,
+  async (c) => {
+    try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
+      const sessionId =
+        c.req.param(
+          "id"
+        );
+
+      const session =
+        await getSession(
+          sessionId
+        );
+
+      if (!session) {
+        return c.json(
+          {
+            error:
+              "Session not found.",
+          },
+          404
+        );
+      }
+
+      const journey =
+        await getJourney(
+          session.journeyId
+        );
+
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found.",
+          },
+          404
+        );
+      }
+
+      const allowed =
+        (
+          auth.user.role ===
+            "facilitator" &&
+          journey.facilitatorId ===
+            auth.user.id
+        ) ||
+        (
+          auth.user.role ===
+            "participant" &&
+          isParticipantLinked(
+            journey,
+            auth.user.email ||
+              ""
+          )
+        );
+
+      if (!allowed) {
+        return c.json(
+          {
+            error:
+              "You do not have access to this report.",
+          },
+          403
+        );
+      }
+
+      if (
+        session.status !==
+        "completed"
+      ) {
+        return c.json(
+          {
+            error:
+              "Reports are only available for completed sessions.",
+          },
+          400
         );
       }
 
@@ -3219,16 +4667,16 @@ app.get(
           },
         }
       );
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Generate report error:",
-        e
+        "[report/download]",
+        error
       );
 
       return c.json(
         {
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -3237,43 +4685,92 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — EMAIL REPORT
+// SESSION REPORT — EMAIL MANUALLY
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post(
   `${P}/sessions/:id/report/email`,
   async (c) => {
     try {
+      const auth =
+        await requireAuth(c);
+
+      if (!auth.ok) {
+        return auth.response;
+      }
+
       const sessionId =
-        c.req.param("id");
+        c.req.param(
+          "id"
+        );
 
       const session =
-        await kv.get(
-          `session:${sessionId}`
+        await getSession(
+          sessionId
         );
 
       if (!session) {
         return c.json(
           {
             error:
-              "Session not found",
+              "Session not found.",
           },
           404
         );
       }
 
       const journey =
-        await kv.get(
-          `journey:${session.journeyId}`
+        await getJourney(
+          session.journeyId
         );
 
       if (!journey) {
         return c.json(
           {
             error:
-              "Journey not found",
+              "Journey not found.",
           },
           404
+        );
+      }
+
+      const allowed =
+        (
+          auth.user.role ===
+            "facilitator" &&
+          journey.facilitatorId ===
+            auth.user.id
+        ) ||
+        (
+          auth.user.role ===
+            "participant" &&
+          isParticipantLinked(
+            journey,
+            auth.user.email ||
+              ""
+          )
+        );
+
+      if (!allowed) {
+        return c.json(
+          {
+            error:
+              "You do not have access to this report.",
+          },
+          403
+        );
+      }
+
+      if (
+        session.status !==
+        "completed"
+      ) {
+        return c.json(
+          {
+            error:
+              "Only completed sessions can be emailed.",
+          },
+          400
         );
       }
 
@@ -3316,7 +4813,7 @@ app.post(
           pdf
         );
 
-      const emailResult =
+      const result =
         await sendEmail({
           to:
             participantEmail,
@@ -3342,7 +4839,8 @@ app.post(
                 Your completed
                 <strong>
                   Session ${session.sessionNumber}
-                  — ${escapeHtml(
+                  —
+                  ${escapeHtml(
                     report.sessionName
                   )}
                 </strong>
@@ -3351,12 +4849,11 @@ app.post(
 
               <div style="
                 background:#F7F3EE;
-                border:1px solid #EBE2D6;
+                border:1px solid #EBE2E6;
                 border-radius:14px;
                 padding:20px;
                 margin:24px 0;
               ">
-
                 <div style="
                   font-size:12px;
                   color:#6B625D;
@@ -3374,7 +4871,6 @@ app.post(
                     journey.title
                   )}
                 </div>
-
               </div>
 
               <p style="
@@ -3382,15 +4878,11 @@ app.post(
                 line-height:1.7;
               ">
                 We've attached your
-                session report as a PDF
-                so you can keep it and
-                revisit your reflections
-                whenever you'd like.
+                session report as a PDF.
               </p>
 
               <p style="
                 font-size:15px;
-                line-height:1.7;
                 color:#6B625D;
               ">
                 Warmly,<br>
@@ -3413,15 +4905,18 @@ app.post(
         });
 
       if (
-        !emailResult.success
+        !result.success
       ) {
         return c.json(
           {
             success: false,
 
             error:
-              emailResult.error ||
+              result.error ||
               "Failed to send report email.",
+
+            email:
+              participantEmail,
           },
           500
         );
@@ -3436,18 +4931,17 @@ app.post(
         email:
           participantEmail,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Email report error:",
-        e
+        "[report/email]",
+        error
       );
 
       return c.json(
         {
           success: false,
-
           error:
-            String(e),
+            String(error),
         },
         500
       );
@@ -3456,252 +4950,126 @@ app.post(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — SAVE BOARD
+// ADMIN — CLEANUP TEST DATA
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.put(
-  `${P}/sessions/:id/board`,
+app.delete(
+  `${P}/admin/cleanup-test-data`,
   async (c) => {
     try {
-      const id =
-        c.req.param("id");
+      const cleanupToken =
+        Deno.env.get(
+          "CLEANUP_TOKEN"
+        );
 
-      const { state } =
-        await c.req.json();
+      const providedToken =
+        c.req.header(
+          "X-Cleanup-Token"
+        ) ?? "";
 
-      if (!state) {
+      if (
+        !cleanupToken ||
+        !providedToken ||
+        providedToken !==
+          cleanupToken
+      ) {
         return c.json(
           {
             error:
-              "Board state is required",
+              "Unauthorized.",
           },
-          400
+          401
         );
       }
 
-      await kv.set(
-        `board:${id}`,
-        {
-          ...state,
+      const journeyEntries =
+        await kv.getEntriesByPrefix(
+          "journey:"
+        );
 
-          updatedAt:
-            new Date().toISOString(),
-        }
-      );
+      const sessionEntries =
+        await kv.getEntriesByPrefix(
+          "session:"
+        );
 
-      if (
-        state.currentStep
-      ) {
-        const session =
-          await kv.get(
-            `session:${id}`
-          );
+      const boardEntries =
+        await kv.getEntriesByPrefix(
+          "board:"
+        );
 
-        if (session) {
-          session.currentStep =
-            state.currentStep;
+      const facilitatorEntries =
+        await kv.getEntriesByPrefix(
+          "facilitator:"
+        );
 
-          session.updatedAt =
-            new Date().toISOString();
+      const participantEntries =
+        await kv.getEntriesByPrefix(
+          "participant_email:"
+        );
 
-          await kv.set(
-            `session:${id}`,
-            session
-          );
-        }
-      }
+      const deleteIfAny =
+        async (
+          entries: any[]
+        ) => {
+          const keys =
+            entries.map(
+              (entry) =>
+                entry.key
+            );
+
+          if (
+            keys.length > 0
+          ) {
+            await kv.mdel(
+              keys
+            );
+          }
+
+          return keys.length;
+        };
+
+      const deleted = {
+        journeys:
+          await deleteIfAny(
+            journeyEntries
+          ),
+
+        sessions:
+          await deleteIfAny(
+            sessionEntries
+          ),
+
+        boards:
+          await deleteIfAny(
+            boardEntries
+          ),
+
+        facilitatorIndexes:
+          await deleteIfAny(
+            facilitatorEntries
+          ),
+
+        participantIndexes:
+          await deleteIfAny(
+            participantEntries
+          ),
+      };
 
       return c.json({
         success: true,
+        deleted,
       });
-    } catch (e) {
+    } catch (error) {
       console.error(
-        "Save board error:",
-        e
+        "[cleanup]",
+        error
       );
 
       return c.json(
         {
+          success: false,
           error:
-            String(e),
-        },
-        500
-      );
-    }
-  }
-);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SESSIONS — UPDATE STATUS
-// ─────────────────────────────────────────────────────────────────────────────
-
-app.put(
-  `${P}/sessions/:id/status`,
-  async (c) => {
-    try {
-      const sessionId =
-        c.req.param("id");
-
-      const { status } =
-        await c.req.json();
-
-      const session =
-        await kv.get(
-          `session:${sessionId}`
-        );
-
-      if (!session) {
-        return c.json(
-          {
-            error:
-              "Session not found",
-          },
-          404
-        );
-      }
-
-      session.status =
-        status;
-
-      session.updatedAt =
-        new Date().toISOString();
-
-      await kv.set(
-        `session:${sessionId}`,
-        session
-      );
-
-      let journey =
-        await kv.get(
-          `journey:${session.journeyId}`
-        );
-
-      if (!journey) {
-        return c.json({
-          success: true,
-        });
-      }
-
-      journey =
-        await ensureJourneySessions(
-          journey
-        );
-
-      const index =
-        journey.sessions.findIndex(
-          (s: any) =>
-            s.id === sessionId
-        );
-
-      if (
-        index !== -1
-      ) {
-        journey.sessions[
-          index
-        ].status =
-          status;
-
-        if (
-          status ===
-          "completed"
-        ) {
-          // ─────────────────────────────────────
-          // Unlock next session
-          // ─────────────────────────────────────
-
-          if (
-            index + 1 <
-            journey.sessions.length
-          ) {
-            const nextSession =
-              journey.sessions[
-                index + 1
-              ];
-
-            if (
-              nextSession.status ===
-              "locked"
-            ) {
-              nextSession.status =
-                "available";
-
-              const nextSessionRecord =
-                await kv.get(
-                  `session:${nextSession.id}`
-                );
-
-              if (
-                nextSessionRecord
-              ) {
-                nextSessionRecord.status =
-                  "available";
-
-                nextSessionRecord.updatedAt =
-                  new Date().toISOString();
-
-                await kv.set(
-                  `session:${nextSession.id}`,
-                  nextSessionRecord
-                );
-              }
-            }
-          }
-
-          // ─────────────────────────────────────
-          // Complete journey if Session 4
-          // ─────────────────────────────────────
-
-          if (
-            index === 3
-          ) {
-            journey.status =
-              "completed";
-          }
-        }
-      }
-
-      await kv.set(
-        `journey:${session.journeyId}`,
-        journey
-      );
-
-      // ─────────────────────────────────────────
-      // AUTOMATIC SESSION REPORT EMAIL
-      // ─────────────────────────────────────────
-
-      let reportEmailResult:
-        | any
-        | null = null;
-
-      if (
-        status ===
-        "completed"
-      ) {
-        reportEmailResult =
-          await sendAutomaticSessionReportEmail(
-            session,
-            journey
-          );
-      }
-
-      return c.json({
-        success: true,
-
-        journey,
-
-        reportEmail:
-          reportEmailResult,
-      });
-    } catch (e) {
-      console.error(
-        "Update session status error:",
-        e
-      );
-
-      return c.json(
-        {
-          error:
-            String(e),
+            String(error),
         },
         500
       );
