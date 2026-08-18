@@ -478,11 +478,13 @@
 
 import React, { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router";
+
 import DashboardLayout from "../../components/DashboardLayout";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
+
 import {
   ArrowLeft,
   Users,
@@ -500,21 +502,68 @@ import {
   X,
   ShieldAlert,
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
-import { toast } from "sonner";
+
 import {
-  projectId,
-  publicAnonKey,
-} from "../../../utils/supabase/info";
+  motion,
+  AnimatePresence,
+} from "motion/react";
+
+import { toast } from "sonner";
+
+import { createClient } from "../../../utils/supabase/client";
+import { projectId } from "../../../utils/supabase/info";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API
+// ─────────────────────────────────────────────────────────────────────────────
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
 
-const HEADERS = {
-  "Content-Type": "application/json",
-  "Authorization": `Bearer ${publicAnonKey}`,
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTHENTICATED HEADERS
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// IMPORTANT:
+// Do NOT use publicAnonKey here.
+//
+// All facilitator API requests must use the currently authenticated
+// Supabase user's access token.
+//
+// This matches the authentication pattern used in SessionRouter.tsx
+// and CreateJourney.tsx.
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ─── Session metadata ─────────────────────────────────────────────────────────
+async function getAuthenticatedHeaders(): Promise<HeadersInit> {
+  const supabase = createClient();
+
+  const {
+    data: {
+      session,
+    },
+    error,
+  } = await supabase.auth.getSession();
+
+  if (
+    error ||
+    !session?.access_token
+  ) {
+    throw new Error(
+      "AUTHENTICATION_REQUIRED"
+    );
+  }
+
+  return {
+    "Content-Type":
+      "application/json",
+
+    Authorization:
+      `Bearer ${session.access_token}`,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION METADATA
+// ─────────────────────────────────────────────────────────────────────────────
 
 const SESSION_META = [
   {
@@ -555,7 +604,9 @@ const SESSION_META = [
   },
 ];
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
 
 type SessionStatus =
   | "locked"
@@ -587,7 +638,9 @@ interface Journey {
   createdAt: string;
 }
 
-// ─── Status badge ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// STATUS BADGE
+// ─────────────────────────────────────────────────────────────────────────────
 
 function StatusBadge({
   status,
@@ -606,33 +659,42 @@ function StatusBadge({
       label: "Locked",
       cls:
         "bg-gray-100 text-gray-500 border-gray-200",
-      icon: <Lock className="w-3 h-3" />,
+      icon: (
+        <Lock className="w-3 h-3" />
+      ),
     },
 
     available: {
       label: "Available",
       cls:
         "bg-[#D4A843]/15 text-[#A07820] border-[#D4A843]/40",
-      icon: <Play className="w-3 h-3" />,
+      icon: (
+        <Play className="w-3 h-3" />
+      ),
     },
 
     in_progress: {
       label: "In Progress",
       cls:
         "bg-[#3D6D6C]/15 text-[#3D6D6C] border-[#3D6D6C]/40",
-      icon: <Clock className="w-3 h-3" />,
+      icon: (
+        <Clock className="w-3 h-3" />
+      ),
     },
 
     completed: {
       label: "Completed",
       cls:
         "bg-[#4A1C5C]/15 text-[#4A1C5C] border-[#4A1C5C]/40",
-      icon: <CheckCircle className="w-3 h-3" />,
+      icon: (
+        <CheckCircle className="w-3 h-3" />
+      ),
     },
   };
 
   const cfg =
-    CONFIGS[status] ?? CONFIGS.locked;
+    CONFIGS[status] ??
+    CONFIGS.locked;
 
   return (
     <span
@@ -644,7 +706,9 @@ function StatusBadge({
   );
 }
 
-// ─── Session action button ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION ACTION BUTTON
+// ─────────────────────────────────────────────────────────────────────────────
 
 function ActionButton({
   status,
@@ -657,11 +721,13 @@ function ActionButton({
   sessionNumber: number;
   isParticipant?: boolean;
 }) {
-  const navigate = useNavigate();
+  const navigate =
+    useNavigate();
 
-  const prefix = isParticipant
-    ? "/participant"
-    : "/facilitator";
+  const prefix =
+    isParticipant
+      ? "/participant"
+      : "/facilitator";
 
   const go = () => {
     navigate(
@@ -669,7 +735,9 @@ function ActionButton({
     );
   };
 
-  if (status === "locked") {
+  if (
+    status === "locked"
+  ) {
     return (
       <button
         disabled
@@ -681,7 +749,9 @@ function ActionButton({
     );
   }
 
-  if (status === "completed") {
+  if (
+    status === "completed"
+  ) {
     return (
       <button
         onClick={go}
@@ -693,7 +763,9 @@ function ActionButton({
     );
   }
 
-  if (status === "in_progress") {
+  if (
+    status === "in_progress"
+  ) {
     return (
       <button
         onClick={go}
@@ -711,19 +783,22 @@ function ActionButton({
       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
     >
       <Play className="w-3.5 h-3.5" />
-      Start Session {sessionNumber}
+      Start Session{" "}
+      {sessionNumber}
     </button>
   );
 }
 
-// ─── Session card ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION CARD
+// ─────────────────────────────────────────────────────────────────────────────
 
 function SessionCard({
   meta,
   entry,
   index,
 }: {
-  meta: typeof SESSION_META[0];
+  meta: (typeof SESSION_META)[0];
   entry: SessionEntry;
   index: number;
 }) {
@@ -772,7 +847,8 @@ function SessionCard({
       <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
         <div className="min-w-0">
           <h3 className="font-semibold text-foreground text-base leading-tight">
-            Session {meta.number} —{" "}
+            Session{" "}
+            {meta.number} —{" "}
             {meta.title}
           </h3>
 
@@ -797,7 +873,9 @@ function SessionCard({
         <ActionButton
           status={entry.status}
           sessionId={entry.id}
-          sessionNumber={meta.number}
+          sessionNumber={
+            meta.number
+          }
         />
       </div>
 
@@ -811,7 +889,9 @@ function SessionCard({
   );
 }
 
-// ─── Delete confirmation modal ────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// DELETE CONFIRMATION MODAL
+// ─────────────────────────────────────────────────────────────────────────────
 
 function DeleteConfirmationModal({
   open,
@@ -841,8 +921,6 @@ function DeleteConfirmationModal({
             opacity: 0,
           }}
         >
-          {/* Backdrop */}
-
           <motion.div
             className="absolute inset-0 bg-[#24152B]/55 backdrop-blur-sm"
             initial={{
@@ -860,8 +938,6 @@ function DeleteConfirmationModal({
               }
             }}
           />
-
-          {/* Modal */}
 
           <motion.div
             role="dialog"
@@ -889,13 +965,9 @@ function DeleteConfirmationModal({
               damping: 26,
             }}
           >
-            {/* Top accent */}
-
             <div className="h-1.5 bg-gradient-to-r from-[#AA5D53] via-[#AA5D53] to-[#D4A843]" />
 
             <div className="p-6 sm:p-7">
-              {/* Close button */}
-
               <button
                 type="button"
                 onClick={onCancel}
@@ -905,8 +977,6 @@ function DeleteConfirmationModal({
               >
                 <X className="w-4 h-4" />
               </button>
-
-              {/* Warning icon */}
 
               <div className="flex justify-center mb-5">
                 <motion.div
@@ -936,8 +1006,6 @@ function DeleteConfirmationModal({
                 </motion.div>
               </div>
 
-              {/* Heading */}
-
               <div className="text-center">
                 <h2
                   id="delete-journey-title"
@@ -956,8 +1024,6 @@ function DeleteConfirmationModal({
                 </p>
               </div>
 
-              {/* Journey name */}
-
               <div className="mt-5 rounded-2xl border border-[#AA5D53]/15 bg-[#EBE2D6]/45 p-4">
                 <p className="text-[11px] uppercase tracking-wider font-semibold text-[#AA5D53] mb-1.5">
                   Journey
@@ -967,8 +1033,6 @@ function DeleteConfirmationModal({
                   {journeyTitle}
                 </p>
               </div>
-
-              {/* Warning */}
 
               <div className="mt-4 flex items-start gap-3 rounded-2xl bg-[#AA5D53]/5 border border-[#AA5D53]/10 p-4">
                 <AlertTriangle className="w-4 h-4 text-[#AA5D53] mt-0.5 flex-shrink-0" />
@@ -983,8 +1047,6 @@ function DeleteConfirmationModal({
                   </span>
                 </p>
               </div>
-
-              {/* Actions */}
 
               <div className="flex flex-col-reverse sm:flex-row gap-3 mt-6">
                 <button
@@ -1016,8 +1078,6 @@ function DeleteConfirmationModal({
                 </button>
               </div>
 
-              {/* Small reassurance */}
-
               <p className="text-[11px] text-center text-muted-foreground mt-4">
                 Your facilitator and participant
                 accounts will not be deleted.
@@ -1030,10 +1090,13 @@ function DeleteConfirmationModal({
   );
 }
 
-// ─── Main ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function JourneyDetail() {
-  const navigate = useNavigate();
+  const navigate =
+    useNavigate();
 
   const { id } =
     useParams<{ id: string }>();
@@ -1066,105 +1129,295 @@ export default function JourneyDetail() {
     setShowDeleteConfirm,
   ] = useState(false);
 
-  // ─── Load journey ──────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // LOAD JOURNEY
+  // ───────────────────────────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!id) return;
+    if (!id) {
+      setLoading(false);
+      return;
+    }
 
-    (async () => {
-      try {
-        const res = await fetch(
-          `${API}/journeys/${id}`,
-          {
-            headers: HEADERS,
+    let cancelled = false;
+
+    const loadJourney =
+      async () => {
+        try {
+          setLoading(true);
+
+          // ─────────────────────────────────────
+          // GET AUTHENTICATED HEADERS
+          // ─────────────────────────────────────
+
+          const headers =
+            await getAuthenticatedHeaders();
+
+          // ─────────────────────────────────────
+          // GET JOURNEY
+          // ─────────────────────────────────────
+
+          const response =
+            await fetch(
+              `${API}/journeys/${id}`,
+              {
+                method: "GET",
+                headers,
+                cache: "no-store",
+              }
+            );
+
+          let data: any = null;
+
+          try {
+            data =
+              await response.json();
+          } catch (jsonError) {
+            console.error(
+              "[journey-detail] Failed to parse journey response:",
+              jsonError
+            );
           }
-        );
 
-        const data =
-          await res.json();
+          // ─────────────────────────────────────
+          // AUTHENTICATION FAILURE
+          // ─────────────────────────────────────
 
-        if (data.success) {
-          const j =
-            data.journey;
+          if (
+            response.status === 401 ||
+            response.status === 403
+          ) {
+            throw new Error(
+              "AUTHENTICATION_REQUIRED"
+            );
+          }
 
-          if (!j.participants) {
-            j.participants =
-              j.participantEmail
+          // ─────────────────────────────────────
+          // JOURNEY NOT FOUND
+          // ─────────────────────────────────────
+
+          if (
+            response.status === 404
+          ) {
+            throw new Error(
+              "JOURNEY_NOT_FOUND"
+            );
+          }
+
+          if (
+            !response.ok ||
+            !data?.success
+          ) {
+            throw new Error(
+              data?.error ||
+                "Failed to load journey."
+            );
+          }
+
+          const loadedJourney =
+            data.journey as Journey;
+
+          // ─────────────────────────────────────
+          // NORMALIZE PARTICIPANTS
+          // ─────────────────────────────────────
+
+          if (
+            !loadedJourney.participants
+          ) {
+            loadedJourney.participants =
+              loadedJourney.participantEmail
                 ? [
                     {
                       email:
-                        j.participantEmail,
+                        loadedJourney.participantEmail,
+
                       linkedAt:
-                        j.createdAt,
+                        loadedJourney.createdAt,
                     },
                   ]
                 : [];
           }
 
-          setJourney(j);
-        } else {
-          toast.error(
-            data.error ||
+          // ─────────────────────────────────────
+          // NORMALIZE SESSIONS
+          // ─────────────────────────────────────
+
+          if (
+            !Array.isArray(
+              loadedJourney.sessions
+            )
+          ) {
+            loadedJourney.sessions =
+              [];
+          }
+
+          if (!cancelled) {
+            setJourney(
+              loadedJourney
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[journey-detail] Failed to load journey:",
+            error
+          );
+
+          if (cancelled) {
+            return;
+          }
+
+          // ─────────────────────────────────────
+          // AUTHENTICATION ERROR
+          // ─────────────────────────────────────
+
+          if (
+            error instanceof Error &&
+            error.message ===
+              "AUTHENTICATION_REQUIRED"
+          ) {
+            toast.error(
+              "Your login session has expired. Please sign in again."
+            );
+
+            navigate(
+              "/facilitator/login",
+              {
+                replace: true,
+              }
+            );
+
+            return;
+          }
+
+          // ─────────────────────────────────────
+          // JOURNEY NOT FOUND
+          // ─────────────────────────────────────
+
+          if (
+            error instanceof Error &&
+            error.message ===
+              "JOURNEY_NOT_FOUND"
+          ) {
+            toast.error(
               "Journey not found."
+            );
+
+            setJourney(null);
+
+            return;
+          }
+
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Failed to load journey."
+          );
+
+          setJourney(null);
+        } finally {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        }
+      };
+
+    loadJourney();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, navigate]);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // LINK PARTICIPANT
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const linkParticipant =
+    async () => {
+      if (
+        !linkEmail.trim() ||
+        !id ||
+        linking
+      ) {
+        return;
+      }
+
+      setLinking(true);
+
+      try {
+        // ─────────────────────────────────────
+        // AUTHENTICATED REQUEST
+        // ─────────────────────────────────────
+
+        const headers =
+          await getAuthenticatedHeaders();
+
+        const email =
+          linkEmail
+            .trim()
+            .toLowerCase();
+
+        const response =
+          await fetch(
+            `${API}/journeys/${id}/link`,
+            {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                participantEmail:
+                  email,
+              }),
+            }
+          );
+
+        let data: any = null;
+
+        try {
+          data =
+            await response.json();
+        } catch (jsonError) {
+          console.error(
+            "[journey-detail] Failed to parse link response:",
+            jsonError
           );
         }
-      } catch (error) {
-        console.error(
-          "Failed to load journey:",
-          error
-        );
 
-        toast.error(
-          "Failed to load journey."
-        );
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [id]);
+        // ─────────────────────────────────────
+        // AUTH FAILURE
+        // ─────────────────────────────────────
 
-  // ─── Link participant ──────────────────────────────────────────────────────
-
-  const linkParticipant = async () => {
-    if (
-      !linkEmail.trim() ||
-      !id
-    ) {
-      return;
-    }
-
-    setLinking(true);
-
-    try {
-      const email =
-        linkEmail.trim();
-
-      const res = await fetch(
-        `${API}/journeys/${id}/link`,
-        {
-          method: "POST",
-          headers: HEADERS,
-          body: JSON.stringify({
-            participantEmail:
-              email,
-          }),
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          throw new Error(
+            "AUTHENTICATION_REQUIRED"
+          );
         }
-      );
 
-      const data =
-        await res.json();
+        if (
+          !response.ok ||
+          !data?.success
+        ) {
+          throw new Error(
+            data?.error ||
+              "Failed to link participant."
+          );
+        }
 
-      if (data.success) {
-        const j =
-          data.journey;
+        const linkedJourney =
+          data.journey as Journey;
 
-        if (!j.participants) {
-          j.participants =
-            j.participantEmail
+        if (
+          !linkedJourney.participants
+        ) {
+          linkedJourney.participants =
+            linkedJourney.participantEmail
               ? [
                   {
                     email:
-                      j.participantEmail,
+                      linkedJourney.participantEmail,
+
                     linkedAt:
                       new Date().toISOString(),
                   },
@@ -1172,97 +1425,180 @@ export default function JourneyDetail() {
               : [];
         }
 
-        setJourney(j);
+        if (
+          !Array.isArray(
+            linkedJourney.sessions
+          )
+        ) {
+          linkedJourney.sessions =
+            journey?.sessions || [];
+        }
+
+        setJourney(
+          linkedJourney
+        );
+
         setLinkEmail("");
 
         toast.success(
           `${email} linked successfully!`
         );
-      } else {
-        toast.error(
-          data.error ||
-            "Failed to link participant."
+      } catch (error) {
+        console.error(
+          "[journey-detail] Link participant error:",
+          error
         );
-      }
-    } catch (error) {
-      console.error(
-        "Link participant error:",
-        error
-      );
 
-      toast.error(
-        "Failed to link participant."
-      );
-    } finally {
-      setLinking(false);
-    }
-  };
+        if (
+          error instanceof Error &&
+          error.message ===
+            "AUTHENTICATION_REQUIRED"
+        ) {
+          toast.error(
+            "Your login session has expired. Please sign in again."
+          );
 
-  // ─── Delete journey ────────────────────────────────────────────────────────
+          navigate(
+            "/facilitator/login",
+            {
+              replace: true,
+            }
+          );
 
-  const deleteJourney = async () => {
-    if (
-      !id ||
-      deleting
-    ) {
-      return;
-    }
-
-    setDeleting(true);
-
-    try {
-      const res = await fetch(
-        `${API}/journeys/${id}`,
-        {
-          method: "DELETE",
-          headers: HEADERS,
+          return;
         }
-      );
 
-      const data =
-        await res.json();
-
-      if (
-        !res.ok ||
-        !data.success
-      ) {
-        throw new Error(
-          data.error ||
-            "Failed to delete journey."
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to link participant."
         );
+      } finally {
+        setLinking(false);
+      }
+    };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // DELETE JOURNEY
+  // ───────────────────────────────────────────────────────────────────────────
+
+  const deleteJourney =
+    async () => {
+      if (
+        !id ||
+        deleting
+      ) {
+        return;
       }
 
-      toast.success(
-        "Journey deleted successfully."
-      );
+      setDeleting(true);
 
-      setShowDeleteConfirm(false);
+      try {
+        // ─────────────────────────────────────
+        // AUTHENTICATED REQUEST
+        // ─────────────────────────────────────
 
-      setTimeout(() => {
-        navigate(
-          "/facilitator/dashboard",
-          {
-            replace: true,
-          }
+        const headers =
+          await getAuthenticatedHeaders();
+
+        const response =
+          await fetch(
+            `${API}/journeys/${id}`,
+            {
+              method: "DELETE",
+              headers,
+            }
+          );
+
+        let data: any = null;
+
+        try {
+          data =
+            await response.json();
+        } catch (jsonError) {
+          console.error(
+            "[journey-detail] Failed to parse delete response:",
+            jsonError
+          );
+        }
+
+        // ─────────────────────────────────────
+        // AUTH FAILURE
+        // ─────────────────────────────────────
+
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          throw new Error(
+            "AUTHENTICATION_REQUIRED"
+          );
+        }
+
+        if (
+          !response.ok ||
+          !data?.success
+        ) {
+          throw new Error(
+            data?.error ||
+              "Failed to delete journey."
+          );
+        }
+
+        toast.success(
+          "Journey deleted successfully."
         );
-      }, 500);
-    } catch (error) {
-      console.error(
-        "Delete journey error:",
-        error
-      );
 
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to delete journey."
-      );
+        setShowDeleteConfirm(
+          false
+        );
 
-      setDeleting(false);
-    }
-  };
+        setTimeout(() => {
+          navigate(
+            "/facilitator/dashboard",
+            {
+              replace: true,
+            }
+          );
+        }, 500);
+      } catch (error) {
+        console.error(
+          "[journey-detail] Delete journey error:",
+          error
+        );
 
-  // ─── Quick session ─────────────────────────────────────────────────────────
+        if (
+          error instanceof Error &&
+          error.message ===
+            "AUTHENTICATION_REQUIRED"
+        ) {
+          toast.error(
+            "Your login session has expired. Please sign in again."
+          );
+
+          navigate(
+            "/facilitator/login",
+            {
+              replace: true,
+            }
+          );
+
+          return;
+        }
+
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to delete journey."
+        );
+
+        setDeleting(false);
+      }
+    };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // QUICK SESSION
+  // ───────────────────────────────────────────────────────────────────────────
 
   const handleQuickSelect = (
     e: React.ChangeEvent<HTMLSelectElement>
@@ -1287,6 +1623,7 @@ export default function JourneyDetail() {
       );
 
     if (!session) {
+      setQuickSession("");
       return;
     }
 
@@ -1310,7 +1647,9 @@ export default function JourneyDetail() {
     setQuickSession("");
   };
 
-  // ─── Loading ───────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // LOADING
+  // ───────────────────────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -1322,7 +1661,9 @@ export default function JourneyDetail() {
     );
   }
 
-  // ─── Not found ─────────────────────────────────────────────────────────────
+  // ───────────────────────────────────────────────────────────────────────────
+  // NOT FOUND
+  // ───────────────────────────────────────────────────────────────────────────
 
   if (!journey) {
     return (
@@ -1346,6 +1687,10 @@ export default function JourneyDetail() {
     );
   }
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // DERIVED DATA
+  // ───────────────────────────────────────────────────────────────────────────
+
   const sessions: SessionEntry[] =
     journey.sessions || [];
 
@@ -1364,6 +1709,10 @@ export default function JourneyDetail() {
       (completedCount / 4) *
         100
     );
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ───────────────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout role="facilitator">
@@ -1449,16 +1798,24 @@ export default function JourneyDetail() {
         {/* ── Delete Confirmation Modal ────────────────────────────────── */}
 
         <DeleteConfirmationModal
-          open={showDeleteConfirm}
-          journeyTitle={journey.title}
+          open={
+            showDeleteConfirm
+          }
+          journeyTitle={
+            journey.title
+          }
           deleting={deleting}
           onCancel={() =>
-            setShowDeleteConfirm(false)
+            setShowDeleteConfirm(
+              false
+            )
           }
-          onConfirm={deleteJourney}
+          onConfirm={
+            deleteJourney
+          }
         />
 
-        {/* ── Overall progress ─────────────────────────────────────────── */}
+        {/* ── Overall Progress ─────────────────────────────────────────── */}
 
         <motion.div
           initial={{
@@ -1753,11 +2110,15 @@ export default function JourneyDetail() {
                         }
                         placeholder="participant@example.com"
                         className="h-10 flex-1"
-                        onKeyDown={(e) =>
-                          e.key ===
-                            "Enter" &&
-                          linkParticipant()
-                        }
+                        onKeyDown={(e) => {
+                          if (
+                            e.key ===
+                            "Enter"
+                          ) {
+                            e.preventDefault();
+                            linkParticipant();
+                          }
+                        }}
                         autoFocus
                       />
 
