@@ -287,16 +287,21 @@ interface SessionEntry {
   status: SessionStatus;
 }
 
+interface Participant {
+  email: string;
+  linkedAt?: string;
+}
+
 interface Journey {
   id: string;
   title: string;
   description: string;
-  facilitatorId: string;
+  facilitatorId?: string;
   participantEmail: string | null;
-  participants: any[];
+  participants: Participant[];
   sessions: SessionEntry[];
   status: string;
-  sessionId: string;
+  sessionId?: string;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -379,6 +384,165 @@ function SessionPip({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZE SESSION
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalizeSession(
+  raw: any
+): SessionEntry | null {
+  if (
+    !raw ||
+    typeof raw.id !== "string" ||
+    !raw.id.trim()
+  ) {
+    return null;
+  }
+
+  const number = Number(raw.number);
+
+  if (
+    !Number.isInteger(number) ||
+    number < 1 ||
+    number > 4
+  ) {
+    return null;
+  }
+
+  const validStatuses: SessionStatus[] = [
+    "locked",
+    "available",
+    "in_progress",
+    "completed",
+  ];
+
+  const status: SessionStatus =
+    validStatuses.includes(raw.status)
+      ? raw.status
+      : "locked";
+
+  return {
+    id: raw.id,
+    number,
+    status,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZE JOURNEY
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalizeJourney(
+  raw: any
+): Journey | null {
+  if (
+    !raw ||
+    typeof raw.id !== "string" ||
+    !raw.id.trim() ||
+    typeof raw.title !== "string"
+  ) {
+    return null;
+  }
+
+  const rawSessions = Array.isArray(raw.sessions)
+    ? raw.sessions
+    : [];
+
+  const sessions = rawSessions
+    .map(normalizeSession)
+    .filter(
+      (
+        session: SessionEntry | null
+      ): session is SessionEntry =>
+        session !== null
+    );
+
+  const normalizedSessions: SessionEntry[] = [];
+
+  for (let number = 1; number <= 4; number++) {
+    const session = sessions.find(
+      (item: SessionEntry) => item.number === number
+    );
+
+    if (session) {
+      normalizedSessions.push(session);
+    }
+  }
+
+  let participants: Participant[] = [];
+
+  if (Array.isArray(raw.participants)) {
+    participants = raw.participants
+      .filter(
+        (participant: any) =>
+          participant &&
+          typeof participant.email === "string" &&
+          participant.email.trim()
+      )
+      .map((participant: any) => ({
+        email: participant.email
+          .trim()
+          .toLowerCase(),
+        linkedAt:
+          typeof participant.linkedAt === "string"
+            ? participant.linkedAt
+            : undefined,
+      }));
+  }
+
+  // Backward compatibility for older journey records.
+  if (
+    participants.length === 0 &&
+    typeof raw.participantEmail === "string" &&
+    raw.participantEmail.trim()
+  ) {
+    participants = [
+      {
+        email: raw.participantEmail
+          .trim()
+          .toLowerCase(),
+      },
+    ];
+  }
+
+  return {
+    id: raw.id,
+
+    title: raw.title,
+
+    description:
+      typeof raw.description === "string"
+        ? raw.description
+        : "",
+
+    facilitatorId:
+      typeof raw.facilitatorId === "string"
+        ? raw.facilitatorId
+        : undefined,
+
+    participantEmail:
+      typeof raw.participantEmail === "string"
+        ? raw.participantEmail
+            .trim()
+            .toLowerCase()
+        : participants[0]?.email || null,
+
+    participants,
+
+    sessions: normalizedSessions,
+
+    status:
+      typeof raw.status === "string"
+        ? raw.status
+        : "active",
+
+    sessionId:
+      typeof raw.sessionId === "string"
+        ? raw.sessionId
+        : undefined,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MAIN
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -408,10 +572,6 @@ export default function FacilitatorDashboard() {
 
   // ───────────────────────────────────────────────────────────────────────────
   // LOAD JOURNEYS
-  //
-  // IMPORTANT:
-  // Do NOT use publicAnonKey for protected journey requests.
-  // Always get the authenticated Supabase session and use its access_token.
   // ───────────────────────────────────────────────────────────────────────────
 
   const loadJourneys = async (
@@ -424,20 +584,18 @@ export default function FacilitatorDashboard() {
         setLoading(true);
       }
 
-      const supabase =
-        createClient();
+      const supabase = createClient();
 
-      // ─────────────────────────────────────
-      // GET AUTHENTICATED SESSION
-      // ─────────────────────────────────────
+      // IMPORTANT:
+      // Protected facilitator endpoints must use the authenticated
+      // Supabase access token, not the public anon key.
 
       const {
         data: {
           session: authSession,
         },
         error: authError,
-      } =
-        await supabase.auth.getSession();
+      } = await supabase.auth.getSession();
 
       if (
         authError ||
@@ -460,12 +618,7 @@ export default function FacilitatorDashboard() {
         return;
       }
 
-      // ─────────────────────────────────────
-      // AUTHENTICATED USER
-      // ─────────────────────────────────────
-
-      const user =
-        authSession.user;
+      const user = authSession.user;
 
       if (!user) {
         setJourneys([]);
@@ -483,48 +636,35 @@ export default function FacilitatorDashboard() {
       setUserId(user.id);
 
       setUserName(
-        user.user_metadata?.name?.split(
-          " "
-        )[0] ||
+        user.user_metadata?.name?.split(" ")[0] ||
           "Facilitator"
       );
-
-      // ─────────────────────────────────────
-      // REAL SUPABASE ACCESS TOKEN
-      //
-      // This is the important fix.
-      // ─────────────────────────────────────
-
-      const accessToken =
-        authSession.access_token;
 
       const headers: HeadersInit = {
         "Content-Type":
           "application/json",
 
         Authorization:
-          `Bearer ${accessToken}`,
+          `Bearer ${authSession.access_token}`,
       };
 
-      // ─────────────────────────────────────
+      // ───────────────────────────────────────────────────────────────────────
       // LOAD FACILITATOR JOURNEYS
-      // ─────────────────────────────────────
+      // ───────────────────────────────────────────────────────────────────────
 
-      const response =
-        await fetch(
-          `${API}/journeys/facilitator/${user.id}`,
-          {
-            method: "GET",
-            headers,
-            cache: "no-store",
-          }
-        );
+      const response = await fetch(
+        `${API}/journeys/facilitator/${user.id}`,
+        {
+          method: "GET",
+          headers,
+          cache: "no-store",
+        }
+      );
 
       let data: any = null;
 
       try {
-        data =
-          await response.json();
+        data = await response.json();
       } catch (jsonError) {
         console.error(
           "[facilitator-dashboard] Failed to parse API response:",
@@ -532,12 +672,37 @@ export default function FacilitatorDashboard() {
         );
       }
 
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        console.error(
+          "[facilitator-dashboard] API authentication failed:",
+          data
+        );
+
+        setJourneys([]);
+
+        navigate(
+          "/facilitator/login",
+          {
+            replace: true,
+          }
+        );
+
+        return;
+      }
+
+      if (response.status === 404) {
+        setJourneys([]);
+        return;
+      }
+
       if (!response.ok) {
         console.error(
           "[facilitator-dashboard] Failed to load journeys:",
           {
-            status:
-              response.status,
+            status: response.status,
             data,
           }
         );
@@ -556,85 +721,45 @@ export default function FacilitatorDashboard() {
         return;
       }
 
-      // ─────────────────────────────────────
-      // DEFENSIVE JOURNEY VALIDATION
-      // ─────────────────────────────────────
+      // ───────────────────────────────────────────────────────────────────────
+      // NORMALIZE
+      // ───────────────────────────────────────────────────────────────────────
 
-      const returnedJourneys =
-        Array.isArray(
-          data.journeys
-        )
-          ? data.journeys
-          : [];
+      const returnedJourneys = Array.isArray(
+        data.journeys
+      )
+        ? data.journeys
+        : [];
 
-      const owned =
-        returnedJourneys.filter(
-          (journey: Journey) => {
+      const normalizedJourneys =
+        returnedJourneys
+          .map(normalizeJourney)
+          .filter(
+            (
+              journey: Journey | null
+            ): journey is Journey =>
+              journey !== null
+          )
+          .filter((journey: Journey) => {
+            // Extra frontend ownership protection.
+            // If backend already filters this, this simply
+            // acts as a second defensive layer.
             if (
-              !journey ||
-              typeof journey.id !==
-                "string"
+              journey.facilitatorId &&
+              journey.facilitatorId !== user.id
             ) {
-              return false;
-            }
-
-            const belongsToUser =
-              journey.facilitatorId ===
-              user.id;
-
-            if (!belongsToUser) {
               console.warn(
                 `[facilitator-dashboard] Ignoring journey "${journey.title}" because it does not belong to the current facilitator.`
               );
+
+              return false;
             }
 
-            return belongsToUser;
-          }
-        );
-
-      // ─────────────────────────────────────
-      // NORMALIZE JOURNEYS
-      //
-      // Older journey records may not have
-      // participants or sessions.
-      // ─────────────────────────────────────
-
-      const normalizedJourneys =
-        owned.map(
-          (journey: Journey) => ({
-            ...journey,
-
-            description:
-              journey.description ||
-              "",
-
-            participantEmail:
-              journey.participantEmail ||
-              null,
-
-            participants:
-              Array.isArray(
-                journey.participants
-              )
-                ? journey.participants
-                : [],
-
-            sessions:
-              Array.isArray(
-                journey.sessions
-              )
-                ? journey.sessions
-                : [],
-          })
-        );
+            return true;
+          });
 
       console.log(
-        `[facilitator-dashboard] auth.uid=${user.id} total_returned=${returnedJourneys.length} owned=${normalizedJourneys.length}`
-      );
-
-      console.log(
-        "[facilitator-dashboard] journeys:",
-        normalizedJourneys
+        `[facilitator-dashboard] auth.uid=${user.id} total_returned=${returnedJourneys.length} normalized=${normalizedJourneys.length}`
       );
 
       setJourneys(
@@ -699,10 +824,12 @@ export default function FacilitatorDashboard() {
 
   const totalParticipants =
     journeys.reduce(
-      (total, journey) =>
+      (
+        total,
+        journey
+      ) =>
         total +
-        (journey.participants
-          ?.length || 0),
+        (journey.participants?.length || 0),
       0
     );
 
@@ -713,9 +840,7 @@ export default function FacilitatorDashboard() {
   const requestDeleteJourney = (
     journey: Journey
   ) => {
-    setDeleteTarget(
-      journey
-    );
+    setDeleteTarget(journey);
   };
 
   const cancelDelete = () => {
@@ -723,9 +848,7 @@ export default function FacilitatorDashboard() {
       return;
     }
 
-    setDeleteTarget(
-      null
-    );
+    setDeleteTarget(null);
   };
 
   const confirmDelete = async () => {
@@ -740,20 +863,14 @@ export default function FacilitatorDashboard() {
     setDeleting(true);
 
     try {
-      const supabase =
-        createClient();
-
-      // ─────────────────────────────────────
-      // GET FRESH AUTH SESSION
-      // ─────────────────────────────────────
+      const supabase = createClient();
 
       const {
         data: {
           session: authSession,
         },
         error: authError,
-      } =
-        await supabase.auth.getSession();
+      } = await supabase.auth.getSession();
 
       if (
         authError ||
@@ -778,44 +895,52 @@ export default function FacilitatorDashboard() {
         return;
       }
 
-      const accessToken =
-        authSession.access_token;
-
       const headers: HeadersInit = {
         "Content-Type":
           "application/json",
 
         Authorization:
-          `Bearer ${accessToken}`,
+          `Bearer ${authSession.access_token}`,
       };
 
-      // ─────────────────────────────────────
-      // DELETE JOURNEY
-      // ─────────────────────────────────────
-
-      const response =
-        await fetch(
-          `${API}/journeys/${deleteTarget.id}`,
-          {
-            method: "DELETE",
-            headers,
-            body: JSON.stringify({
-              facilitatorId:
-                userId,
-            }),
-          }
-        );
+      const response = await fetch(
+        `${API}/journeys/${deleteTarget.id}`,
+        {
+          method: "DELETE",
+          headers,
+          body: JSON.stringify({
+            facilitatorId: userId,
+          }),
+        }
+      );
 
       let data: any = null;
 
       try {
-        data =
-          await response.json();
+        data = await response.json();
       } catch (jsonError) {
         console.error(
           "[facilitator-dashboard] Failed to parse delete response:",
           jsonError
         );
+      }
+
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        window.alert(
+          "Your login session has expired. Please sign in again."
+        );
+
+        navigate(
+          "/facilitator/login",
+          {
+            replace: true,
+          }
+        );
+
+        return;
       }
 
       if (
@@ -835,10 +960,6 @@ export default function FacilitatorDashboard() {
         return;
       }
 
-      // ─────────────────────────────────────
-      // REMOVE FROM UI
-      // ─────────────────────────────────────
-
       setJourneys(
         (current) =>
           current.filter(
@@ -848,9 +969,7 @@ export default function FacilitatorDashboard() {
           )
       );
 
-      setDeleteTarget(
-        null
-      );
+      setDeleteTarget(null);
 
       console.log(
         "[facilitator-dashboard] Journey deleted successfully:",
@@ -876,6 +995,7 @@ export default function FacilitatorDashboard() {
 
   return (
     <DashboardLayout role="facilitator">
+
       <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
 
         {/* ─────────────────────────────────────────────────────────────────── */}
@@ -894,6 +1014,7 @@ export default function FacilitatorDashboard() {
           className="mb-8"
         >
           <div className="flex items-start justify-between gap-4">
+
             <div>
               <h1
                 className="mb-2"
@@ -1041,7 +1162,9 @@ export default function FacilitatorDashboard() {
           className="mb-8"
         >
           <Card className="p-5 sm:p-7 bg-gradient-to-r from-[#4A1C5C] to-[#3D6D6C] text-white">
+
             <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+
               <div>
                 <h2
                   className="text-white mb-1"
@@ -1093,7 +1216,9 @@ export default function FacilitatorDashboard() {
             delay: 0.2,
           }}
         >
+
           <div className="flex items-center justify-between mb-4">
+
             <h3
               style={{
                 color:
@@ -1124,7 +1249,9 @@ export default function FacilitatorDashboard() {
             </Card>
           ) : journeys.length ===
             0 ? (
+
             <Card className="p-12 text-center">
+
               <FolderOpen className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-20" />
 
               <h4 className="text-foreground mb-2 font-semibold">
@@ -1148,30 +1275,40 @@ export default function FacilitatorDashboard() {
                 <Plus className="w-4 h-4 mr-2" />
                 Create Journey
               </Button>
+
             </Card>
+
           ) : (
+
             <div className="space-y-4">
+
               {journeys.map(
                 (
                   journey,
                   index
                 ) => {
+
                   const sessions =
                     journey.sessions ||
                     [];
 
                   const completedCount =
                     sessions.filter(
-                      (session) =>
+                      (
+                        session
+                      ) =>
                         session.status ===
                         "completed"
                     ).length;
 
                   const progressPct =
-                    Math.round(
-                      (completedCount /
-                        4) *
-                        100
+                    Math.min(
+                      100,
+                      Math.round(
+                        (completedCount /
+                          4) *
+                          100
+                      )
                     );
 
                   const next =
@@ -1210,12 +1347,15 @@ export default function FacilitatorDashboard() {
                       }}
                       className="bg-white rounded-xl border border-border p-4 sm:p-5 hover:shadow-md hover:border-[#4A1C5C]/20 transition-all"
                     >
+
                       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
 
                         {/* Journey information */}
 
                         <div className="flex-1 min-w-0">
+
                           <div className="flex items-center gap-2 flex-wrap mb-1">
+
                             <h4 className="font-semibold text-foreground">
                               {
                                 journey.title
@@ -1265,10 +1405,12 @@ export default function FacilitatorDashboard() {
                           {/* Session pips */}
 
                           <div className="flex items-center gap-3">
+
                             {SESSION_META.map(
                               (
                                 meta
                               ) => {
+
                                 const entry =
                                   sessions.find(
                                     (
@@ -1315,17 +1457,20 @@ export default function FacilitatorDashboard() {
                               }
                               %
                             </span>
+
                           </div>
 
                           {/* Progress */}
 
                           <div className="w-full bg-[#EBE2D6] rounded-full h-1 mt-2 max-w-xs">
+
                             <div
                               className="bg-[#4A1C5C] h-1 rounded-full transition-all"
                               style={{
                                 width: `${progressPct}%`,
                               }}
                             />
+
                           </div>
                         </div>
 
@@ -1415,12 +1560,14 @@ export default function FacilitatorDashboard() {
                             <Trash2 className="w-3.5 h-3.5 mr-1" />
                             Delete
                           </Button>
+
                         </div>
                       </div>
                     </motion.div>
                   );
                 }
               )}
+
             </div>
           )}
         </motion.div>
@@ -1444,6 +1591,7 @@ export default function FacilitatorDashboard() {
             }}
             className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
           >
+
             {/* Backdrop */}
 
             <div
@@ -1478,7 +1626,6 @@ export default function FacilitatorDashboard() {
               }}
               className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#EBE2D6]"
             >
-              {/* Top accent */}
 
               <div className="h-1.5 bg-gradient-to-r from-[#AA5D53] to-[#D4A843]" />
 
@@ -1520,9 +1667,10 @@ export default function FacilitatorDashboard() {
                   Delete this journey?
                 </h2>
 
-                {/* Journey title */}
+                {/* Journey */}
 
                 <div className="bg-[#EBE2D6]/55 border border-[#EBE2D6] rounded-xl px-4 py-3 mb-4">
+
                   <p className="text-xs text-muted-foreground mb-1">
                     Journey
                   </p>
@@ -1532,6 +1680,7 @@ export default function FacilitatorDashboard() {
                       deleteTarget.title
                     }
                   </p>
+
                 </div>
 
                 {/* Warning */}
@@ -1552,6 +1701,7 @@ export default function FacilitatorDashboard() {
                 {/* Actions */}
 
                 <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+
                   <Button
                     type="button"
                     variant="outline"
@@ -1588,12 +1738,14 @@ export default function FacilitatorDashboard() {
                       </>
                     )}
                   </Button>
+
                 </div>
               </div>
             </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
+
     </DashboardLayout>
   );
 }

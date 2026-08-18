@@ -501,6 +501,7 @@ import {
   AlertTriangle,
   X,
   ShieldAlert,
+  RefreshCw,
 } from "lucide-react";
 
 import {
@@ -522,42 +523,22 @@ const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`
 // ─────────────────────────────────────────────────────────────────────────────
 // AUTHENTICATED HEADERS
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// IMPORTANT:
-// Do NOT use publicAnonKey here.
-//
-// All facilitator API requests must use the currently authenticated
-// Supabase user's access token.
-//
-// This matches the authentication pattern used in SessionRouter.tsx
-// and CreateJourney.tsx.
-// ─────────────────────────────────────────────────────────────────────────────
 
 async function getAuthenticatedHeaders(): Promise<HeadersInit> {
   const supabase = createClient();
 
   const {
-    data: {
-      session,
-    },
+    data: { session },
     error,
   } = await supabase.auth.getSession();
 
-  if (
-    error ||
-    !session?.access_token
-  ) {
-    throw new Error(
-      "AUTHENTICATION_REQUIRED"
-    );
+  if (error || !session?.access_token) {
+    throw new Error("AUTHENTICATION_REQUIRED");
   }
 
   return {
-    "Content-Type":
-      "application/json",
-
-    Authorization:
-      `Bearer ${session.access_token}`,
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${session.access_token}`,
   };
 }
 
@@ -573,7 +554,6 @@ const SESSION_META = [
       "Book of Life · Exit Bin · Discovery Landscape · Deck of Recognition · Dinner Table · Grounding & Draining · Recognition Word",
     steps: 7,
     color: "#4A1C5C",
-    lightBg: "#4A1C5C10",
   },
   {
     number: 2,
@@ -582,7 +562,6 @@ const SESSION_META = [
       "Re-Entry · Identity Selection · Identity Bridge · Energy Thermometer · Life Reality Grid · Alignment Reflection",
     steps: 9,
     color: "#3D6D6C",
-    lightBg: "#3D6D6C10",
   },
   {
     number: 3,
@@ -591,7 +570,6 @@ const SESSION_META = [
       "Deepening the exploration of your most aligned identity and mapping the path forward.",
     steps: 8,
     color: "#D4A843",
-    lightBg: "#D4A84310",
   },
   {
     number: 4,
@@ -600,7 +578,6 @@ const SESSION_META = [
       "Bringing it all together — your commitments, support system, and first bold steps.",
     steps: 6,
     color: "#AA5D53",
-    lightBg: "#AA5D5310",
   },
 ];
 
@@ -622,20 +599,178 @@ interface SessionEntry {
 
 interface Participant {
   email: string;
-  linkedAt: string;
+  linkedAt?: string;
 }
 
 interface Journey {
   id: string;
   title: string;
   description: string;
-  facilitatorId: string;
+  facilitatorId?: string;
   participantEmail: string | null;
   participants: Participant[];
-  sessionId: string;
   sessions: SessionEntry[];
   status: string;
-  createdAt: string;
+  createdAt?: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NORMALIZATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+function normalizeSession(
+  raw: any
+): SessionEntry | null {
+  if (
+    !raw ||
+    typeof raw.id !== "string" ||
+    !raw.id.trim()
+  ) {
+    return null;
+  }
+
+  const number = Number(raw.number);
+
+  if (
+    !Number.isInteger(number) ||
+    number < 1 ||
+    number > 4
+  ) {
+    return null;
+  }
+
+  const validStatuses: SessionStatus[] = [
+    "locked",
+    "available",
+    "in_progress",
+    "completed",
+  ];
+
+  const status: SessionStatus =
+    validStatuses.includes(raw.status)
+      ? raw.status
+      : "locked";
+
+  return {
+    id: raw.id,
+    number,
+    status,
+  };
+}
+
+function normalizeJourney(
+  raw: any
+): Journey | null {
+  if (
+    !raw ||
+    typeof raw.id !== "string" ||
+    !raw.id.trim() ||
+    typeof raw.title !== "string"
+  ) {
+    return null;
+  }
+
+  const rawSessions = Array.isArray(raw.sessions)
+    ? raw.sessions
+    : [];
+
+  const sessions = rawSessions
+    .map(normalizeSession)
+    .filter(
+      (
+        session: SessionEntry | null
+      ): session is SessionEntry =>
+        session !== null
+    );
+
+  const normalizedSessions: SessionEntry[] = [];
+
+  for (let number = 1; number <= 4; number++) {
+    const session = sessions.find(
+      (item: SessionEntry) => item.number === number
+    );
+
+    if (session) {
+      normalizedSessions.push(session);
+    }
+  }
+
+  let participants: Participant[] = [];
+
+  if (Array.isArray(raw.participants)) {
+    participants = raw.participants
+      .filter(
+        (participant: any) =>
+          participant &&
+          typeof participant.email === "string" &&
+          participant.email.trim()
+      )
+      .map((participant: any) => ({
+        email: participant.email
+          .trim()
+          .toLowerCase(),
+        linkedAt:
+          typeof participant.linkedAt === "string"
+            ? participant.linkedAt
+            : undefined,
+      }));
+  }
+
+  // Backward compatibility with older records.
+  if (
+    participants.length === 0 &&
+    typeof raw.participantEmail === "string" &&
+    raw.participantEmail.trim()
+  ) {
+    participants = [
+      {
+        email: raw.participantEmail
+          .trim()
+          .toLowerCase(),
+        linkedAt:
+          typeof raw.createdAt === "string"
+            ? raw.createdAt
+            : undefined,
+      },
+    ];
+  }
+
+  return {
+    id: raw.id,
+
+    title: raw.title,
+
+    description:
+      typeof raw.description === "string"
+        ? raw.description
+        : "",
+
+    facilitatorId:
+      typeof raw.facilitatorId === "string"
+        ? raw.facilitatorId
+        : undefined,
+
+    participantEmail:
+      typeof raw.participantEmail === "string"
+        ? raw.participantEmail
+            .trim()
+            .toLowerCase()
+        : participants[0]?.email || null,
+
+    participants,
+
+    sessions: normalizedSessions,
+
+    status:
+      typeof raw.status === "string"
+        ? raw.status
+        : "active",
+
+    createdAt:
+      typeof raw.createdAt === "string"
+        ? raw.createdAt
+        : undefined,
+  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -648,7 +783,7 @@ function StatusBadge({
   status: SessionStatus;
 }) {
   const CONFIGS: Record<
-    string,
+    SessionStatus,
     {
       label: string;
       cls: string;
@@ -693,7 +828,7 @@ function StatusBadge({
   };
 
   const cfg =
-    CONFIGS[status] ??
+    CONFIGS[status] ||
     CONFIGS.locked;
 
   return (
@@ -714,30 +849,25 @@ function ActionButton({
   status,
   sessionId,
   sessionNumber,
-  isParticipant = false,
 }: {
   status: SessionStatus;
   sessionId: string;
   sessionNumber: number;
-  isParticipant?: boolean;
 }) {
-  const navigate =
-    useNavigate();
-
-  const prefix =
-    isParticipant
-      ? "/participant"
-      : "/facilitator";
+  const navigate = useNavigate();
 
   const go = () => {
+    if (!sessionId) {
+      toast.error("Session ID is missing.");
+      return;
+    }
+
     navigate(
-      `${prefix}/session/${sessionId}/board`
+      `/facilitator/session/${sessionId}/board`
     );
   };
 
-  if (
-    status === "locked"
-  ) {
+  if (status === "locked") {
     return (
       <button
         disabled
@@ -749,9 +879,7 @@ function ActionButton({
     );
   }
 
-  if (
-    status === "completed"
-  ) {
+  if (status === "completed") {
     return (
       <button
         onClick={go}
@@ -763,9 +891,7 @@ function ActionButton({
     );
   }
 
-  if (
-    status === "in_progress"
-  ) {
+  if (status === "in_progress") {
     return (
       <button
         onClick={go}
@@ -783,8 +909,7 @@ function ActionButton({
       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
     >
       <Play className="w-3.5 h-3.5" />
-      Start Session{" "}
-      {sessionNumber}
+      Start Session {sessionNumber}
     </button>
   );
 }
@@ -821,7 +946,7 @@ function SessionCard({
       className={`relative rounded-2xl border-2 p-5 sm:p-6 transition-all ${
         isLocked
           ? "border-border bg-white/50 opacity-70"
-          : "border-border bg-white hover:shadow-md hover:border-opacity-60"
+          : "border-border bg-white hover:shadow-md"
       }`}
       style={
         isLocked
@@ -845,24 +970,28 @@ function SessionCard({
       </div>
 
       <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
+
         <div className="min-w-0">
+
           <h3 className="font-semibold text-foreground text-base leading-tight">
-            Session{" "}
-            {meta.number} —{" "}
+            Session {meta.number} —{" "}
             {meta.title}
           </h3>
 
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
             {meta.description}
           </p>
+
         </div>
 
         <StatusBadge
           status={entry.status}
         />
+
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3 mt-4">
+
         <span className="text-xs text-muted-foreground">
           {meta.steps} steps{" "}
           {isLocked
@@ -877,6 +1006,7 @@ function SessionCard({
             meta.number
           }
         />
+
       </div>
 
       {entry.status ===
@@ -885,6 +1015,7 @@ function SessionCard({
           <CheckCircle className="w-3.5 h-3.5 text-white" />
         </div>
       )}
+
     </motion.div>
   );
 }
@@ -921,6 +1052,7 @@ function DeleteConfirmationModal({
             opacity: 0,
           }}
         >
+
           <motion.div
             className="absolute inset-0 bg-[#24152B]/55 backdrop-blur-sm"
             initial={{
@@ -965,48 +1097,41 @@ function DeleteConfirmationModal({
               damping: 26,
             }}
           >
+
             <div className="h-1.5 bg-gradient-to-r from-[#AA5D53] via-[#AA5D53] to-[#D4A843]" />
 
             <div className="p-6 sm:p-7">
+
               <button
                 type="button"
                 onClick={onCancel}
                 disabled={deleting}
                 aria-label="Close"
-                className="absolute right-4 top-4 w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-[#EBE2D6]/70 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                className="absolute right-4 top-4 w-9 h-9 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-[#EBE2D6]/70 transition-colors disabled:opacity-40"
               >
                 <X className="w-4 h-4" />
               </button>
 
               <div className="flex justify-center mb-5">
-                <motion.div
-                  initial={{
-                    scale: 0.7,
-                    opacity: 0,
-                  }}
-                  animate={{
-                    scale: 1,
-                    opacity: 1,
-                  }}
-                  transition={{
-                    delay: 0.08,
-                    type: "spring",
-                    stiffness: 350,
-                    damping: 20,
-                  }}
-                  className="relative"
-                >
+
+                <div className="relative">
+
                   <div className="absolute inset-0 rounded-2xl bg-[#AA5D53]/10 blur-xl" />
 
                   <div className="relative w-16 h-16 rounded-2xl bg-[#AA5D53]/10 border border-[#AA5D53]/20 flex items-center justify-center">
+
                     <div className="w-11 h-11 rounded-xl bg-[#AA5D53]/15 flex items-center justify-center">
                       <ShieldAlert className="w-6 h-6 text-[#AA5D53]" />
                     </div>
+
                   </div>
-                </motion.div>
+
+                </div>
+
               </div>
 
               <div className="text-center">
+
                 <h2
                   id="delete-journey-title"
                   className="text-xl sm:text-2xl font-semibold text-[#2C1810]"
@@ -1022,9 +1147,11 @@ function DeleteConfirmationModal({
                   You are about to permanently
                   delete this Zest Journey.
                 </p>
+
               </div>
 
               <div className="mt-5 rounded-2xl border border-[#AA5D53]/15 bg-[#EBE2D6]/45 p-4">
+
                 <p className="text-[11px] uppercase tracking-wider font-semibold text-[#AA5D53] mb-1.5">
                   Journey
                 </p>
@@ -1032,9 +1159,11 @@ function DeleteConfirmationModal({
                 <p className="font-semibold text-[#2C1810] text-sm sm:text-base break-words">
                   {journeyTitle}
                 </p>
+
               </div>
 
               <div className="mt-4 flex items-start gap-3 rounded-2xl bg-[#AA5D53]/5 border border-[#AA5D53]/10 p-4">
+
                 <AlertTriangle className="w-4 h-4 text-[#AA5D53] mt-0.5 flex-shrink-0" />
 
                 <p className="text-xs sm:text-sm text-[#60443E] leading-relaxed">
@@ -1046,14 +1175,16 @@ function DeleteConfirmationModal({
                     This action cannot be undone.
                   </span>
                 </p>
+
               </div>
 
               <div className="flex flex-col-reverse sm:flex-row gap-3 mt-6">
+
                 <button
                   type="button"
                   onClick={onCancel}
                   disabled={deleting}
-                  className="flex-1 h-11 rounded-xl border border-border bg-white text-sm font-semibold text-foreground hover:bg-[#EBE2D6]/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 h-11 rounded-xl border border-border bg-white text-sm font-semibold text-foreground hover:bg-[#EBE2D6]/50 transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -1062,7 +1193,7 @@ function DeleteConfirmationModal({
                   type="button"
                   onClick={onConfirm}
                   disabled={deleting}
-                  className="flex-1 h-11 rounded-xl bg-[#AA5D53] text-white text-sm font-semibold hover:bg-[#934C44] transition-all shadow-sm hover:shadow-md disabled:opacity-70 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                  className="flex-1 h-11 rounded-xl bg-[#AA5D53] text-white text-sm font-semibold hover:bg-[#934C44] transition-all shadow-sm disabled:opacity-70 flex items-center justify-center gap-2"
                 >
                   {deleting ? (
                     <>
@@ -1076,14 +1207,17 @@ function DeleteConfirmationModal({
                     </>
                   )}
                 </button>
+
               </div>
 
               <p className="text-[11px] text-center text-muted-foreground mt-4">
                 Your facilitator and participant
                 accounts will not be deleted.
               </p>
+
             </div>
           </motion.div>
+
         </motion.div>
       )}
     </AnimatePresence>
@@ -1095,8 +1229,7 @@ function DeleteConfirmationModal({
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function JourneyDetail() {
-  const navigate =
-    useNavigate();
+  const navigate = useNavigate();
 
   const { id } =
     useParams<{ id: string }>();
@@ -1106,6 +1239,9 @@ export default function JourneyDetail() {
 
   const [loading, setLoading] =
     useState(true);
+
+  const [refreshing, setRefreshing] =
+    useState(false);
 
   const [linkEmail, setLinkEmail] =
     useState("");
@@ -1133,200 +1269,145 @@ export default function JourneyDetail() {
   // LOAD JOURNEY
   // ───────────────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
+  const loadJourney = async (
+    showLoader = true
+  ) => {
     if (!id) {
+      setJourney(null);
       setLoading(false);
       return;
     }
 
-    let cancelled = false;
+    try {
+      if (showLoader) {
+        setLoading(true);
+      } else {
+        setRefreshing(true);
+      }
 
-    const loadJourney =
-      async () => {
-        try {
-          setLoading(true);
+      const headers =
+        await getAuthenticatedHeaders();
 
-          // ─────────────────────────────────────
-          // GET AUTHENTICATED HEADERS
-          // ─────────────────────────────────────
-
-          const headers =
-            await getAuthenticatedHeaders();
-
-          // ─────────────────────────────────────
-          // GET JOURNEY
-          // ─────────────────────────────────────
-
-          const response =
-            await fetch(
-              `${API}/journeys/${id}`,
-              {
-                method: "GET",
-                headers,
-                cache: "no-store",
-              }
-            );
-
-          let data: any = null;
-
-          try {
-            data =
-              await response.json();
-          } catch (jsonError) {
-            console.error(
-              "[journey-detail] Failed to parse journey response:",
-              jsonError
-            );
+      const response =
+        await fetch(
+          `${API}/journeys/${encodeURIComponent(id)}`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
           }
+        );
 
-          // ─────────────────────────────────────
-          // AUTHENTICATION FAILURE
-          // ─────────────────────────────────────
+      let data: any = null;
 
-          if (
-            response.status === 401 ||
-            response.status === 403
-          ) {
-            throw new Error(
-              "AUTHENTICATION_REQUIRED"
-            );
+      try {
+        data =
+          await response.json();
+      } catch (jsonError) {
+        console.error(
+          "[journey-detail] Failed to parse response:",
+          jsonError
+        );
+      }
+
+      if (
+        response.status === 401 ||
+        response.status === 403
+      ) {
+        throw new Error(
+          "AUTHENTICATION_REQUIRED"
+        );
+      }
+
+      if (
+        response.status === 404
+      ) {
+        throw new Error(
+          "JOURNEY_NOT_FOUND"
+        );
+      }
+
+      if (
+        !response.ok ||
+        !data?.success
+      ) {
+        throw new Error(
+          data?.error ||
+            "Failed to load journey."
+        );
+      }
+
+      const normalized =
+        normalizeJourney(
+          data.journey
+        );
+
+      if (!normalized) {
+        throw new Error(
+          "Invalid journey data returned by server."
+        );
+      }
+
+      setJourney(normalized);
+    } catch (error) {
+      console.error(
+        "[journey-detail] Failed to load journey:",
+        error
+      );
+
+      if (
+        error instanceof Error &&
+        error.message ===
+          "AUTHENTICATION_REQUIRED"
+      ) {
+        toast.error(
+          "Your login session has expired. Please sign in again."
+        );
+
+        navigate(
+          "/facilitator/login",
+          {
+            replace: true,
           }
+        );
 
-          // ─────────────────────────────────────
-          // JOURNEY NOT FOUND
-          // ─────────────────────────────────────
+        return;
+      }
 
-          if (
-            response.status === 404
-          ) {
-            throw new Error(
-              "JOURNEY_NOT_FOUND"
-            );
-          }
+      if (
+        error instanceof Error &&
+        error.message ===
+          "JOURNEY_NOT_FOUND"
+      ) {
+        toast.error(
+          "Journey not found."
+        );
 
-          if (
-            !response.ok ||
-            !data?.success
-          ) {
-            throw new Error(
-              data?.error ||
-                "Failed to load journey."
-            );
-          }
+        setJourney(null);
 
-          const loadedJourney =
-            data.journey as Journey;
+        return;
+      }
 
-          // ─────────────────────────────────────
-          // NORMALIZE PARTICIPANTS
-          // ─────────────────────────────────────
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to load journey."
+      );
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
 
-          if (
-            !loadedJourney.participants
-          ) {
-            loadedJourney.participants =
-              loadedJourney.participantEmail
-                ? [
-                    {
-                      email:
-                        loadedJourney.participantEmail,
+  // ───────────────────────────────────────────────────────────────────────────
+  // INITIAL LOAD
+  // ───────────────────────────────────────────────────────────────────────────
 
-                      linkedAt:
-                        loadedJourney.createdAt,
-                    },
-                  ]
-                : [];
-          }
-
-          // ─────────────────────────────────────
-          // NORMALIZE SESSIONS
-          // ─────────────────────────────────────
-
-          if (
-            !Array.isArray(
-              loadedJourney.sessions
-            )
-          ) {
-            loadedJourney.sessions =
-              [];
-          }
-
-          if (!cancelled) {
-            setJourney(
-              loadedJourney
-            );
-          }
-        } catch (error) {
-          console.error(
-            "[journey-detail] Failed to load journey:",
-            error
-          );
-
-          if (cancelled) {
-            return;
-          }
-
-          // ─────────────────────────────────────
-          // AUTHENTICATION ERROR
-          // ─────────────────────────────────────
-
-          if (
-            error instanceof Error &&
-            error.message ===
-              "AUTHENTICATION_REQUIRED"
-          ) {
-            toast.error(
-              "Your login session has expired. Please sign in again."
-            );
-
-            navigate(
-              "/facilitator/login",
-              {
-                replace: true,
-              }
-            );
-
-            return;
-          }
-
-          // ─────────────────────────────────────
-          // JOURNEY NOT FOUND
-          // ─────────────────────────────────────
-
-          if (
-            error instanceof Error &&
-            error.message ===
-              "JOURNEY_NOT_FOUND"
-          ) {
-            toast.error(
-              "Journey not found."
-            );
-
-            setJourney(null);
-
-            return;
-          }
-
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "Failed to load journey."
-          );
-
-          setJourney(null);
-        } finally {
-          if (!cancelled) {
-            setLoading(false);
-          }
-        }
-      };
-
+  useEffect(() => {
     loadJourney();
 
-    return () => {
-      cancelled = true;
-    };
-  }, [id, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // ───────────────────────────────────────────────────────────────────────────
   // LINK PARTICIPANT
@@ -1345,10 +1426,6 @@ export default function JourneyDetail() {
       setLinking(true);
 
       try {
-        // ─────────────────────────────────────
-        // AUTHENTICATED REQUEST
-        // ─────────────────────────────────────
-
         const headers =
           await getAuthenticatedHeaders();
 
@@ -1359,7 +1436,7 @@ export default function JourneyDetail() {
 
         const response =
           await fetch(
-            `${API}/journeys/${id}/link`,
+            `${API}/journeys/${encodeURIComponent(id)}/link`,
             {
               method: "POST",
               headers,
@@ -1382,10 +1459,6 @@ export default function JourneyDetail() {
           );
         }
 
-        // ─────────────────────────────────────
-        // AUTH FAILURE
-        // ─────────────────────────────────────
-
         if (
           response.status === 401 ||
           response.status === 403
@@ -1406,32 +1479,14 @@ export default function JourneyDetail() {
         }
 
         const linkedJourney =
-          data.journey as Journey;
+          normalizeJourney(
+            data.journey
+          );
 
-        if (
-          !linkedJourney.participants
-        ) {
-          linkedJourney.participants =
-            linkedJourney.participantEmail
-              ? [
-                  {
-                    email:
-                      linkedJourney.participantEmail,
-
-                    linkedAt:
-                      new Date().toISOString(),
-                  },
-                ]
-              : [];
-        }
-
-        if (
-          !Array.isArray(
-            linkedJourney.sessions
-          )
-        ) {
-          linkedJourney.sessions =
-            journey?.sessions || [];
+        if (!linkedJourney) {
+          throw new Error(
+            "The server linked the participant but returned invalid journey data."
+          );
         }
 
         setJourney(
@@ -1440,9 +1495,17 @@ export default function JourneyDetail() {
 
         setLinkEmail("");
 
+        setShowAddParticipant(
+          false
+        );
+
         toast.success(
           `${email} linked successfully!`
         );
+
+        // Refresh from backend so every page gets the same
+        // persisted state.
+        await loadJourney(false);
       } catch (error) {
         console.error(
           "[journey-detail] Link participant error:",
@@ -1494,16 +1557,12 @@ export default function JourneyDetail() {
       setDeleting(true);
 
       try {
-        // ─────────────────────────────────────
-        // AUTHENTICATED REQUEST
-        // ─────────────────────────────────────
-
         const headers =
           await getAuthenticatedHeaders();
 
         const response =
           await fetch(
-            `${API}/journeys/${id}`,
+            `${API}/journeys/${encodeURIComponent(id)}`,
             {
               method: "DELETE",
               headers,
@@ -1521,10 +1580,6 @@ export default function JourneyDetail() {
             jsonError
           );
         }
-
-        // ─────────────────────────────────────
-        // AUTH FAILURE
-        // ─────────────────────────────────────
 
         if (
           response.status === 401 ||
@@ -1553,14 +1608,12 @@ export default function JourneyDetail() {
           false
         );
 
-        setTimeout(() => {
-          navigate(
-            "/facilitator/dashboard",
-            {
-              replace: true,
-            }
-          );
-        }, 500);
+        navigate(
+          "/facilitator/dashboard",
+          {
+            replace: true,
+          }
+        );
       } catch (error) {
         console.error(
           "[journey-detail] Delete journey error:",
@@ -1591,7 +1644,7 @@ export default function JourneyDetail() {
             ? error.message
             : "Failed to delete journey."
         );
-
+      } finally {
         setDeleting(false);
       }
     };
@@ -1603,13 +1656,13 @@ export default function JourneyDetail() {
   const handleQuickSelect = (
     e: React.ChangeEvent<HTMLSelectElement>
   ) => {
-    const val =
+    const value =
       e.target.value;
 
-    setQuickSession(val);
+    setQuickSession(value);
 
     if (
-      !val ||
+      !value ||
       !journey
     ) {
       return;
@@ -1617,13 +1670,18 @@ export default function JourneyDetail() {
 
     const session =
       journey.sessions.find(
-        (s) =>
-          s.number ===
-          parseInt(val)
+        (item) =>
+          item.number ===
+          Number(value)
       );
 
     if (!session) {
+      toast.error(
+        "Session not found."
+      );
+
       setQuickSession("");
+
       return;
     }
 
@@ -1654,9 +1712,13 @@ export default function JourneyDetail() {
   if (loading) {
     return (
       <DashboardLayout role="facilitator">
+
         <div className="p-8 flex items-center justify-center min-h-64">
+
           <Loader2 className="w-6 h-6 animate-spin text-[#4A1C5C]" />
+
         </div>
+
       </DashboardLayout>
     );
   }
@@ -1668,7 +1730,9 @@ export default function JourneyDetail() {
   if (!journey) {
     return (
       <DashboardLayout role="facilitator">
+
         <div className="p-8 text-center">
+
           <p className="text-muted-foreground mb-4">
             Journey not found.
           </p>
@@ -1682,7 +1746,9 @@ export default function JourneyDetail() {
           >
             Back to Dashboard
           </Button>
+
         </div>
+
       </DashboardLayout>
     );
   }
@@ -1691,7 +1757,7 @@ export default function JourneyDetail() {
   // DERIVED DATA
   // ───────────────────────────────────────────────────────────────────────────
 
-  const sessions: SessionEntry[] =
+  const sessions =
     journey.sessions || [];
 
   const participants =
@@ -1699,23 +1765,27 @@ export default function JourneyDetail() {
 
   const completedCount =
     sessions.filter(
-      (s) =>
-        s.status ===
+      (session) =>
+        session.status ===
         "completed"
     ).length;
 
   const progressPct =
-    Math.round(
-      (completedCount / 4) *
-        100
+    Math.min(
+      100,
+      Math.round(
+        (completedCount / 4) *
+          100
+      )
     );
 
-  // ───────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // RENDER
-  // ───────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
 
   return (
     <DashboardLayout role="facilitator">
+
       <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
 
         {/* ── Back + Header ─────────────────────────────────────────────── */}
@@ -1731,21 +1801,49 @@ export default function JourneyDetail() {
           }}
           className="mb-6"
         >
-          <Button
-            variant="ghost"
-            onClick={() =>
-              navigate(
-                "/facilitator/dashboard"
-              )
-            }
-            className="-ml-2 mb-4"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Dashboard
-          </Button>
+
+          <div className="flex items-center justify-between gap-3 mb-4">
+
+            <Button
+              variant="ghost"
+              onClick={() =>
+                navigate(
+                  "/facilitator/dashboard"
+                )
+              }
+              className="-ml-2"
+            >
+              <ArrowLeft className="w-4 h-4 mr-2" />
+              Back to Dashboard
+            </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                loadJourney(false)
+              }
+              disabled={
+                refreshing
+              }
+            >
+              {refreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+
+              <span className="hidden sm:inline ml-2">
+                Refresh
+              </span>
+            </Button>
+
+          </div>
 
           <div className="flex items-start justify-between gap-4 flex-wrap">
+
             <div>
+
               <h1
                 className="mb-1"
                 style={{
@@ -1761,9 +1859,11 @@ export default function JourneyDetail() {
                   {journey.description}
                 </p>
               )}
+
             </div>
 
             <div className="flex items-center gap-2">
+
               <Badge
                 className={
                   journey.status ===
@@ -1786,16 +1886,19 @@ export default function JourneyDetail() {
                   )
                 }
                 disabled={deleting}
-                className="border-[#AA5D53]/40 text-[#AA5D53] hover:bg-[#AA5D53]/10 hover:text-[#AA5D53]"
+                className="border-[#AA5D53]/40 text-[#AA5D53] hover:bg-[#AA5D53]/10"
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Journey
               </Button>
+
             </div>
+
           </div>
+
         </motion.div>
 
-        {/* ── Delete Confirmation Modal ────────────────────────────────── */}
+        {/* ── Delete Modal ─────────────────────────────────────────────── */}
 
         <DeleteConfirmationModal
           open={
@@ -1831,9 +1934,13 @@ export default function JourneyDetail() {
           }}
           className="mb-6"
         >
+
           <Card className="p-5">
+
             <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
+
               <div>
+
                 <p className="text-sm font-semibold text-foreground">
                   Journey Progress
                 </p>
@@ -1842,9 +1949,11 @@ export default function JourneyDetail() {
                   {completedCount} of 4
                   sessions completed
                 </p>
+
               </div>
 
               <div className="flex items-center gap-2">
+
                 <label
                   htmlFor="session-select"
                   className="text-xs text-muted-foreground whitespace-nowrap"
@@ -1862,16 +1971,18 @@ export default function JourneyDetail() {
                   }
                   className="text-sm border border-border rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-[#4A1C5C]/30 pr-8 cursor-pointer"
                 >
+
                   <option value="">
                     Select Session ▾
                   </option>
 
                   {SESSION_META.map(
                     (meta) => {
+
                       const entry =
                         sessions.find(
-                          (s) =>
-                            s.number ===
+                          (session) =>
+                            session.number ===
                             meta.number
                         );
 
@@ -1911,11 +2022,15 @@ export default function JourneyDetail() {
                       );
                     }
                   )}
+
                 </select>
+
               </div>
+
             </div>
 
             <div className="w-full bg-[#EBE2D6] rounded-full h-2.5">
+
               <motion.div
                 className="bg-[#4A1C5C] h-2.5 rounded-full transition-all"
                 initial={{
@@ -1929,15 +2044,18 @@ export default function JourneyDetail() {
                   delay: 0.2,
                 }}
               />
+
             </div>
 
             <div className="flex justify-between mt-1.5">
+
               {SESSION_META.map(
                 (meta) => {
+
                   const entry =
                     sessions.find(
-                      (s) =>
-                        s.number ===
+                      (session) =>
+                        session.number ===
                         meta.number
                     );
 
@@ -1961,8 +2079,11 @@ export default function JourneyDetail() {
                   );
                 }
               )}
+
             </div>
+
           </Card>
+
         </motion.div>
 
         {/* ── Sessions ─────────────────────────────────────────────────── */}
@@ -1981,17 +2102,20 @@ export default function JourneyDetail() {
           }}
           className="mb-6"
         >
+
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
             Sessions
           </h3>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
             {SESSION_META.map(
               (meta, i) => {
+
                 const entry =
                   sessions.find(
-                    (s) =>
-                      s.number ===
+                    (session) =>
+                      session.number ===
                       meta.number
                   );
 
@@ -2011,7 +2135,9 @@ export default function JourneyDetail() {
                 );
               }
             )}
+
           </div>
+
         </motion.div>
 
         {/* ── Participants ─────────────────────────────────────────────── */}
@@ -2029,9 +2155,13 @@ export default function JourneyDetail() {
             delay: 0.2,
           }}
         >
+
           <Card className="p-5 sm:p-6">
+
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+
               <div>
+
                 <h3
                   className="font-semibold"
                   style={{
@@ -2048,13 +2178,15 @@ export default function JourneyDetail() {
                     ? "No participants linked"
                     : `${participants.length} linked`}
                 </p>
+
               </div>
 
               <Button
                 size="sm"
                 onClick={() =>
                   setShowAddParticipant(
-                    (v) => !v
+                    (value) =>
+                      !value
                   )
                 }
                 className="bg-[#D4A843] hover:bg-[#C49835] text-[#2C1810]"
@@ -2065,9 +2197,13 @@ export default function JourneyDetail() {
                   ? "Close"
                   : "Add Participant"}
               </Button>
+
             </div>
 
+            {/* Add participant */}
+
             <AnimatePresence>
+
               {showAddParticipant && (
                 <motion.div
                   initial={{
@@ -2084,20 +2220,25 @@ export default function JourneyDetail() {
                   }}
                   className="overflow-hidden"
                 >
+
                   <div className="mb-4 p-4 bg-[#EBE2D6]/50 rounded-xl border border-border space-y-3">
+
                     <p className="text-sm font-medium">
                       Link participant by
                       email
                     </p>
 
                     <p className="text-xs text-muted-foreground">
-                      They need a participant
-                      account. After linking
-                      they'll see this journey
-                      on their dashboard.
+                      Enter the email address
+                      associated with the
+                      participant's account.
+                      Once linked, the journey
+                      will appear on their
+                      participant dashboard.
                     </p>
 
                     <div className="flex gap-2">
+
                       <Input
                         type="email"
                         value={
@@ -2138,21 +2279,30 @@ export default function JourneyDetail() {
                           <Mail className="w-4 h-4" />
                         )}
                       </Button>
+
                     </div>
 
                     <p className="text-xs text-muted-foreground">
-                      Input clears after
-                      linking so you can add
-                      another immediately.
+                      After linking, the
+                      participant can refresh
+                      their dashboard to see
+                      this journey.
                     </p>
+
                   </div>
+
                 </motion.div>
               )}
+
             </AnimatePresence>
+
+            {/* Participant list */}
 
             {participants.length ===
             0 ? (
+
               <div className="text-center py-8 text-muted-foreground">
+
                 <Users className="w-10 h-10 mx-auto mb-3 opacity-20" />
 
                 <p className="text-sm">
@@ -2162,16 +2312,22 @@ export default function JourneyDetail() {
 
                 <p className="text-xs mt-1">
                   Use the button above to
-                  invite by email.
+                  link a participant by
+                  email.
                 </p>
+
               </div>
+
             ) : (
+
               <div className="space-y-2.5">
+
                 {participants.map(
-                  (p, i) => (
+                  (participant, index) => (
+
                     <motion.div
                       key={
-                        p.email
+                        participant.email
                       }
                       initial={{
                         opacity: 0,
@@ -2183,60 +2339,82 @@ export default function JourneyDetail() {
                       }}
                       transition={{
                         delay:
-                          i * 0.05,
+                          index *
+                          0.05,
                       }}
                       className="flex items-center gap-3 p-3 bg-[#EBE2E6]/40 rounded-xl"
                     >
+
                       <div className="w-8 h-8 rounded-full bg-[#3D6D6C] flex items-center justify-center text-white font-semibold text-sm flex-shrink-0">
-                        {p.email[0].toUpperCase()}
+                        {participant.email
+                          .charAt(0)
+                          .toUpperCase()}
                       </div>
 
                       <div className="flex-1 min-w-0">
+
                         <p className="font-medium text-sm text-foreground truncate">
-                          {p.email}
+                          {
+                            participant.email
+                          }
                         </p>
 
-                        <p className="text-xs text-muted-foreground">
-                          Linked{" "}
-                          {new Date(
-                            p.linkedAt
-                          ).toLocaleDateString(
-                            "en-US",
-                            {
-                              month:
-                                "short",
-                              day:
-                                "numeric",
-                              year:
-                                "numeric",
-                            }
-                          )}
-                        </p>
+                        {participant.linkedAt && (
+                          <p className="text-xs text-muted-foreground">
+                            Linked{" "}
+                            {new Date(
+                              participant.linkedAt
+                            ).toLocaleDateString(
+                              "en-US",
+                              {
+                                month:
+                                  "short",
+                                day:
+                                  "numeric",
+                                year:
+                                  "numeric",
+                              }
+                            )}
+                          </p>
+                        )}
+
                       </div>
 
                       <Badge className="bg-[#3D6D6C] text-white text-xs flex-shrink-0">
                         Linked
                       </Badge>
+
                     </motion.div>
+
                   )
                 )}
+
               </div>
+
             )}
 
             {participants.length >
               0 && (
               <div className="mt-4 p-3 bg-blue-50 rounded-lg text-xs text-blue-700 border border-blue-100">
+
                 Participants join at{" "}
+
                 <span className="font-mono font-medium">
                   /participant/dashboard
                 </span>{" "}
+
                 using their participant
                 account.
+
               </div>
             )}
+
           </Card>
+
         </motion.div>
+
       </div>
+
     </DashboardLayout>
   );
 }
