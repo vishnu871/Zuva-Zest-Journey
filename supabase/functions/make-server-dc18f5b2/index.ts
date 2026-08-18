@@ -383,15 +383,15 @@ const P = "/make-server-dc18f5b2";
 // HEALTH
 // ─────────────────────────────────────────────────────────────────────────────
 
-app.get(`${P}/health`, (c) =>
-  c.json({
+app.get(`${P}/health`, (c) => {
+  return c.json({
     status: "ok",
     ts: new Date().toISOString(),
-  })
-);
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AUTH
+// AUTH — SIGNUP
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.post(`${P}/auth/signup`, async (c) => {
@@ -451,8 +451,7 @@ app.post(`${P}/auth/signup`, async (c) => {
         email,
         fullName,
         role,
-        createdAt:
-          new Date().toISOString(),
+        createdAt: new Date().toISOString(),
       }
     );
 
@@ -466,10 +465,7 @@ app.post(`${P}/auth/signup`, async (c) => {
       },
     });
   } catch (e) {
-    console.error(
-      "Signup error:",
-      e
-    );
+    console.error("Signup error:", e);
 
     return c.json(
       {
@@ -480,12 +476,19 @@ app.post(`${P}/auth/signup`, async (c) => {
   }
 });
 
+// ─────────────────────────────────────────────────────────────────────────────
+// AUTH — VERIFY ROLE
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.post(`${P}/auth/verify-role`, async (c) => {
   try {
+    const authorization =
+      c.req.header("Authorization") ?? "";
+
     const accessToken =
-      c.req
-        .header("Authorization")
-        ?.split(" ")[1];
+      authorization.startsWith("Bearer ")
+        ? authorization.slice(7).trim()
+        : "";
 
     if (!accessToken) {
       return c.json(
@@ -643,8 +646,7 @@ async function ensureJourneySessions(
       id: s2Id,
       number: 2,
       status:
-        s1Status ===
-        "completed"
+        s1Status === "completed"
           ? "available"
           : "locked",
     },
@@ -711,23 +713,6 @@ async function ensureJourneySessions(
 // ─────────────────────────────────────────────────────────────────────────────
 // ADMIN — CLEANUP TEST DATA
 // ─────────────────────────────────────────────────────────────────────────────
-//
-// This endpoint removes:
-//   - Journey records
-//   - Session records
-//   - Session boards
-//   - Facilitator journey indexes
-//   - Participant journey indexes
-//
-// It DOES NOT delete Supabase Auth users.
-//
-// Authentication uses:
-//   X-Cleanup-Token
-//
-// The token is stored in Supabase Edge Function secrets as:
-//   CLEANUP_TOKEN
-//
-// ─────────────────────────────────────────────────────────────────────────────
 
 app.delete(
   `${P}/admin/cleanup-test-data`,
@@ -762,10 +747,6 @@ app.delete(
         "[cleanup] Starting test data cleanup..."
       );
 
-      // ─────────────────────────────────────────
-      // Find all journeys
-      // ─────────────────────────────────────────
-
       const journeyEntries =
         await kv.getEntriesByPrefix(
           "journey:"
@@ -775,14 +756,6 @@ app.delete(
         journeyEntries.map(
           (entry) => entry.key
         );
-
-      console.log(
-        `[cleanup] Found ${journeyEntries.length} journeys`
-      );
-
-      // ─────────────────────────────────────────
-      // Find all sessions
-      // ─────────────────────────────────────────
 
       const sessionEntries =
         await kv.getEntriesByPrefix(
@@ -794,14 +767,6 @@ app.delete(
           (entry) => entry.key
         );
 
-      console.log(
-        `[cleanup] Found ${sessionEntries.length} sessions`
-      );
-
-      // ─────────────────────────────────────────
-      // Find all boards
-      // ─────────────────────────────────────────
-
       const boardEntries =
         await kv.getEntriesByPrefix(
           "board:"
@@ -811,14 +776,6 @@ app.delete(
         boardEntries.map(
           (entry) => entry.key
         );
-
-      console.log(
-        `[cleanup] Found ${boardEntries.length} boards`
-      );
-
-      // ─────────────────────────────────────────
-      // Find facilitator indexes
-      // ─────────────────────────────────────────
 
       const facilitatorEntries =
         await kv.getEntriesByPrefix(
@@ -830,14 +787,6 @@ app.delete(
           (entry) => entry.key
         );
 
-      console.log(
-        `[cleanup] Found ${facilitatorEntries.length} facilitator indexes`
-      );
-
-      // ─────────────────────────────────────────
-      // Find participant indexes
-      // ─────────────────────────────────────────
-
       const participantEntries =
         await kv.getEntriesByPrefix(
           "participant_email:"
@@ -848,32 +797,13 @@ app.delete(
           (entry) => entry.key
         );
 
-      console.log(
-        `[cleanup] Found ${participantEntries.length} participant indexes`
-      );
-
-      // ─────────────────────────────────────────
-      // Delete journeys
-      // ─────────────────────────────────────────
-
-      let deletedJourneys = 0;
-
       if (
         journeyKeys.length > 0
       ) {
         await kv.mdel(
           journeyKeys
         );
-
-        deletedJourneys =
-          journeyKeys.length;
       }
-
-      // ─────────────────────────────────────────
-      // Delete sessions
-      // ─────────────────────────────────────────
-
-      let deletedSessions = 0;
 
       if (
         sessionKeys.length > 0
@@ -881,16 +811,7 @@ app.delete(
         await kv.mdel(
           sessionKeys
         );
-
-        deletedSessions =
-          sessionKeys.length;
       }
-
-      // ─────────────────────────────────────────
-      // Delete boards
-      // ─────────────────────────────────────────
-
-      let deletedBoards = 0;
 
       if (
         boardKeys.length > 0
@@ -898,47 +819,22 @@ app.delete(
         await kv.mdel(
           boardKeys
         );
-
-        deletedBoards =
-          boardKeys.length;
       }
 
-      // ─────────────────────────────────────────
-      // Delete facilitator indexes
-      // ─────────────────────────────────────────
-
-      let deletedFacilitatorIndexes =
-        0;
-
       if (
-        facilitatorKeys.length >
-        0
+        facilitatorKeys.length > 0
       ) {
         await kv.mdel(
           facilitatorKeys
         );
-
-        deletedFacilitatorIndexes =
-          facilitatorKeys.length;
       }
 
-      // ─────────────────────────────────────────
-      // Delete participant indexes
-      // ─────────────────────────────────────────
-
-      let deletedParticipantIndexes =
-        0;
-
       if (
-        participantKeys.length >
-        0
+        participantKeys.length > 0
       ) {
         await kv.mdel(
           participantKeys
         );
-
-        deletedParticipantIndexes =
-          participantKeys.length;
       }
 
       console.log(
@@ -950,19 +846,19 @@ app.delete(
 
         deleted: {
           journeys:
-            deletedJourneys,
+            journeyKeys.length,
 
           sessions:
-            deletedSessions,
+            sessionKeys.length,
 
           boards:
-            deletedBoards,
+            boardKeys.length,
 
           facilitatorIndexes:
-            deletedFacilitatorIndexes,
+            facilitatorKeys.length,
 
           participantIndexes:
-            deletedParticipantIndexes,
+            participantKeys.length,
         },
 
         authUsersDeleted: 0,
@@ -1250,7 +1146,7 @@ app.get(
 
         if (!journey) {
           console.log(
-            `[facilitator-journeys] journey ${id} missing from KV — skipping`
+            `[facilitator-journeys] journey ${id} missing — removing stale index entry`
           );
 
           continue;
@@ -1261,7 +1157,7 @@ app.get(
           userId
         ) {
           console.log(
-            `[facilitator-journeys] REJECT journey ${id}`
+            `[facilitator-journeys] rejected journey ${id}`
           );
 
           continue;
@@ -1284,6 +1180,11 @@ app.get(
           journeys.reverse(),
       });
     } catch (e) {
+      console.error(
+        "Facilitator journeys error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1307,7 +1208,9 @@ app.get(
           c.req.param(
             "email"
           )
-        );
+        )
+          .trim()
+          .toLowerCase();
 
       const journeyIds: string[] =
         (await kv.get(
@@ -1315,6 +1218,9 @@ app.get(
         )) || [];
 
       const journeys = [];
+
+      const validJourneyIds: string[] =
+        [];
 
       for (
         const id of journeyIds
@@ -1329,15 +1235,25 @@ app.get(
         }
 
         const isLinked =
-          (journey.participants ||
+          (
+            journey.participants ||
             []
           ).some(
             (p: any) =>
-              p.email ===
+              String(
+                p.email
+              )
+                .trim()
+                .toLowerCase() ===
               email
           ) ||
-          journey.participantEmail ===
-            email;
+          String(
+            journey.participantEmail ||
+            ""
+          )
+            .trim()
+            .toLowerCase() ===
+          email;
 
         if (!isLinked) {
           continue;
@@ -1351,6 +1267,21 @@ app.get(
         journeys.push(
           journey
         );
+
+        validJourneyIds.push(
+          id
+        );
+      }
+
+      // Clean stale participant index entries.
+      if (
+        validJourneyIds.length !==
+        journeyIds.length
+      ) {
+        await kv.set(
+          `participant_email:${email}:journeys`,
+          validJourneyIds
+        );
       }
 
       return c.json({
@@ -1360,6 +1291,11 @@ app.get(
           journeys.reverse(),
       });
     } catch (e) {
+      console.error(
+        "Participant journeys error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1371,18 +1307,19 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// JOURNEYS — SINGLE
+// JOURNEYS — GET SINGLE
 // ─────────────────────────────────────────────────────────────────────────────
 
 app.get(
   `${P}/journeys/:id`,
   async (c) => {
     try {
+      const journeyId =
+        c.req.param("id");
+
       let journey =
         await kv.get(
-          `journey:${c.req.param(
-            "id"
-          )}`
+          `journey:${journeyId}`
         );
 
       if (!journey) {
@@ -1405,9 +1342,323 @@ app.get(
         journey,
       });
     } catch (e) {
+      console.error(
+        "Get journey error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
+        },
+        500
+      );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// JOURNEYS — DELETE SINGLE
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Deletes:
+//   1. Journey record
+//   2. All session records
+//   3. All session boards
+//   4. Facilitator journey index entry
+//   5. Participant journey index entries
+//
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.delete(
+  `${P}/journeys/:id`,
+  async (c) => {
+    try {
+      const journeyId =
+        c.req.param("id");
+
+      if (!journeyId) {
+        return c.json(
+          {
+            error:
+              "Journey ID is required",
+          },
+          400
+        );
+      }
+
+      console.log(
+        `[delete-journey] Starting deletion for ${journeyId}`
+      );
+
+      // ─────────────────────────────────────────
+      // Find journey
+      // ─────────────────────────────────────────
+
+      const journey =
+        await kv.get(
+          `journey:${journeyId}`
+        );
+
+      if (!journey) {
+        return c.json(
+          {
+            error:
+              "Journey not found",
+          },
+          404
+        );
+      }
+
+      // ─────────────────────────────────────────
+      // Determine sessions
+      // ─────────────────────────────────────────
+
+      let sessions =
+        journey.sessions || [];
+
+      // Support old journeys that only have
+      // sessionId.
+      if (
+        sessions.length === 0 &&
+        journey.sessionId
+      ) {
+        sessions = [
+          {
+            id:
+              journey.sessionId,
+            number: 1,
+          },
+        ];
+      }
+
+      const sessionIds =
+        sessions
+          .map(
+            (session: any) =>
+              session.id
+          )
+          .filter(
+            (id: string) =>
+              Boolean(id)
+          );
+
+      // ─────────────────────────────────────────
+      // Delete boards
+      // ─────────────────────────────────────────
+
+      let deletedBoards = 0;
+
+      for (
+        const sessionId of
+        sessionIds
+      ) {
+        const board =
+          await kv.get(
+            `board:${sessionId}`
+          );
+
+        if (
+          board !== undefined &&
+          board !== null
+        ) {
+          await kv.del(
+            `board:${sessionId}`
+          );
+
+          deletedBoards++;
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // Delete sessions
+      // ─────────────────────────────────────────
+
+      let deletedSessions = 0;
+
+      for (
+        const sessionId of
+        sessionIds
+      ) {
+        const session =
+          await kv.get(
+            `session:${sessionId}`
+          );
+
+        if (
+          session !== undefined &&
+          session !== null
+        ) {
+          await kv.del(
+            `session:${sessionId}`
+          );
+
+          deletedSessions++;
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // Remove from facilitator index
+      // ─────────────────────────────────────────
+
+      let facilitatorIndexUpdated =
+        false;
+
+      if (
+        journey.facilitatorId
+      ) {
+        const facilitatorKey =
+          `facilitator:${journey.facilitatorId}:journeys`;
+
+        const facilitatorJourneys: string[] =
+          (await kv.get(
+            facilitatorKey
+          )) || [];
+
+        const filtered =
+          facilitatorJourneys.filter(
+            (id: string) =>
+              id !== journeyId
+          );
+
+        if (
+          filtered.length !==
+          facilitatorJourneys.length
+        ) {
+          await kv.set(
+            facilitatorKey,
+            filtered
+          );
+
+          facilitatorIndexUpdated =
+            true;
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // Remove from participant indexes
+      // ─────────────────────────────────────────
+
+      let participantIndexesUpdated =
+        0;
+
+      const participantEmails =
+        new Set<string>();
+
+      // Current participantEmail
+      if (
+        journey.participantEmail
+      ) {
+        participantEmails.add(
+          String(
+            journey.participantEmail
+          )
+            .trim()
+            .toLowerCase()
+        );
+      }
+
+      // Participants array
+      for (
+        const participant of
+        journey.participants ||
+        []
+      ) {
+        if (
+          participant?.email
+        ) {
+          participantEmails.add(
+            String(
+              participant.email
+            )
+              .trim()
+              .toLowerCase()
+          );
+        }
+      }
+
+      for (
+        const email of
+        participantEmails
+      ) {
+        const participantKey =
+          `participant_email:${email}:journeys`;
+
+        const participantJourneys: string[] =
+          (await kv.get(
+            participantKey
+          )) || [];
+
+        const filtered =
+          participantJourneys.filter(
+            (id: string) =>
+              id !== journeyId
+          );
+
+        if (
+          filtered.length !==
+          participantJourneys.length
+        ) {
+          await kv.set(
+            participantKey,
+            filtered
+          );
+
+          participantIndexesUpdated++;
+        }
+      }
+
+      // ─────────────────────────────────────────
+      // Delete journey itself
+      // ─────────────────────────────────────────
+
+      await kv.del(
+        `journey:${journeyId}`
+      );
+
+      console.log(
+        `[delete-journey] Successfully deleted ${journeyId}`
+      );
+
+      return c.json({
+        success: true,
+
+        message:
+          "Journey deleted successfully.",
+
+        deleted: {
+          journey: 1,
+
+          sessions:
+            deletedSessions,
+
+          boards:
+            deletedBoards,
+
+          facilitatorIndex:
+            facilitatorIndexUpdated
+              ? 1
+              : 0,
+
+          participantIndexes:
+            participantIndexesUpdated,
+        },
+      });
+    } catch (e) {
+      console.error(
+        "[delete-journey] Error:",
+        e
+      );
+
+      return c.json(
+        {
+          success: false,
+
+          error:
+            "Failed to delete journey.",
+
+          details:
+            String(e),
         },
         500
       );
@@ -1475,7 +1726,12 @@ app.post(
       if (
         journey.participants.some(
           (p: any) =>
-            p.email === email
+            String(
+              p.email
+            )
+              .trim()
+              .toLowerCase() ===
+            email
         )
       ) {
         return c.json(
@@ -1528,6 +1784,11 @@ app.post(
         journey,
       });
     } catch (e) {
+      console.error(
+        "Link participant error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1588,7 +1849,7 @@ app.get(
       ) {
         for (
           const sessionItem of
-            journey.sessions
+          journey.sessions
         ) {
           if (
             sessionItem.number <
@@ -1618,6 +1879,11 @@ app.get(
         previousBoards,
       });
     } catch (e) {
+      console.error(
+        "Get session error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1663,6 +1929,11 @@ app.get(
           defaultBoard,
       });
     } catch (e) {
+      console.error(
+        "Get board error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1686,6 +1957,16 @@ app.put(
 
       const { state } =
         await c.req.json();
+
+      if (!state) {
+        return c.json(
+          {
+            error:
+              "Board state is required",
+          },
+          400
+        );
+      }
 
       await kv.set(
         `board:${id}`,
@@ -1723,6 +2004,11 @@ app.put(
         success: true,
       });
     } catch (e) {
+      console.error(
+        "Save board error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),
@@ -1800,8 +2086,6 @@ app.put(
           index
         ].status = status;
 
-        // When a session is completed,
-        // unlock the next session.
         if (
           status === "completed"
         ) {
@@ -1843,7 +2127,6 @@ app.put(
             }
           }
 
-          // Session 4 completed
           if (index === 3) {
             journey.status =
               "completed";
@@ -1861,6 +2144,11 @@ app.put(
         journey,
       });
     } catch (e) {
+      console.error(
+        "Update session status error:",
+        e
+      );
+
       return c.json(
         {
           error: String(e),

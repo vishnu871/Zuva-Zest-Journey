@@ -233,7 +233,7 @@
 // }
 
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
 import DashboardLayout from "../../components/DashboardLayout";
 import { Card } from "../../components/ui/card";
@@ -250,12 +250,12 @@ import {
   CheckCircle,
   RotateCcw,
   Trash2,
-  RefreshCw,
+  X,
+  AlertTriangle,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import { createClient } from "../../../utils/supabase/client";
 import { projectId, publicAnonKey } from "../../../utils/supabase/info";
-import { toast } from "sonner";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
 
@@ -281,13 +281,11 @@ interface Journey {
   title: string;
   description: string;
   facilitatorId: string;
-  facilitatorEmail: string;
   participantEmail: string | null;
   participants: any[];
   sessions: SessionEntry[];
   status: string;
   sessionId: string;
-  startingSessionNumber?: number;
 }
 
 const SESSION_META = [
@@ -360,258 +358,107 @@ function SessionPip({
 export default function FacilitatorDashboard() {
   const navigate = useNavigate();
 
-  const [journeys, setJourneys] = useState<Journey[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [deletingJourneyId, setDeletingJourneyId] =
-    useState<string | null>(null);
+  const [journeys, setJourneys] =
+    useState<Journey[]>([]);
+
+  const [loading, setLoading] =
+    useState(true);
 
   const [userName, setUserName] =
     useState("Facilitator");
 
-  const loadJourneys = useCallback(
-    async (showRefreshState = false) => {
-      try {
-        if (showRefreshState) {
-          setRefreshing(true);
-        } else {
-          setLoading(true);
-        }
+  const [userId, setUserId] =
+    useState<string | null>(null);
 
-        const supabase = createClient();
+  const [deleteTarget, setDeleteTarget] =
+    useState<Journey | null>(null);
 
-        const {
-          data: { user },
-          error: userError,
-        } = await supabase.auth.getUser();
-
-        if (userError) {
-          console.error(
-            "[dashboard] Failed to get authenticated user:",
-            userError
-          );
-        }
-
-        if (!user) {
-          navigate("/facilitator/login");
-          return;
-        }
-
-        setUserName(
-          user.user_metadata?.name?.split(" ")[0] ||
-            "Facilitator"
-        );
-
-        console.log(
-          "[dashboard] Authenticated facilitator:",
-          {
-            id: user.id,
-            email: user.email,
-          }
-        );
-
-        const endpoint = `${API}/journeys/facilitator/${encodeURIComponent(
-          user.id
-        )}`;
-
-        console.log(
-          "[dashboard] Fetching journeys:",
-          endpoint
-        );
-
-        const res = await fetch(endpoint, {
-          method: "GET",
-          headers: HEADERS,
-          cache: "no-store",
-        });
-
-        const responseText = await res.text();
-
-        let data: any;
-
-        try {
-          data = JSON.parse(responseText);
-        } catch {
-          console.error(
-            "[dashboard] Invalid JSON response:",
-            responseText
-          );
-
-          throw new Error(
-            `Server returned an invalid response (${res.status})`
-          );
-        }
-
-        console.log(
-          "[dashboard] Journey API response:",
-          data
-        );
-
-        if (!res.ok) {
-          throw new Error(
-            data?.error ||
-              `Failed to load journeys (${res.status})`
-          );
-        }
-
-        if (!data.success) {
-          throw new Error(
-            data?.error ||
-              "Failed to load facilitator journeys"
-          );
-        }
-
-        const returnedJourneys: Journey[] =
-          Array.isArray(data.journeys)
-            ? data.journeys
-            : [];
-
-        /*
-         * Defence-in-depth ownership check.
-         *
-         * The backend also validates facilitatorId,
-         * but we verify it again here before displaying.
-         */
-        const ownedJourneys =
-          returnedJourneys.filter((journey) => {
-            const belongsToUser =
-              journey.facilitatorId === user.id;
-
-            if (!belongsToUser) {
-              console.warn(
-                `[dashboard] Ignoring journey "${journey.title}" because facilitatorId=${journey.facilitatorId} does not match authenticated user ${user.id}`
-              );
-            }
-
-            return belongsToUser;
-          });
-
-        console.log(
-          "[dashboard] Journey counts:",
-          {
-            returned: returnedJourneys.length,
-            owned: ownedJourneys.length,
-            authUserId: user.id,
-          }
-        );
-
-        setJourneys(ownedJourneys);
-      } catch (error: any) {
-        console.error(
-          "[dashboard] Failed to load journeys:",
-          error
-        );
-
-        toast.error(
-          error?.message ||
-            "Failed to load journeys"
-        );
-
-        setJourneys([]);
-      } finally {
-        setLoading(false);
-        setRefreshing(false);
-      }
-    },
-    [navigate]
-  );
+  const [deleting, setDeleting] =
+    useState(false);
 
   useEffect(() => {
     loadJourneys();
-  }, [loadJourneys]);
+  }, []);
 
-  const handleDeleteJourney = async (
-    journey: Journey
-  ) => {
-    const confirmed = window.confirm(
-      `Delete "${journey.title}"?\n\nThis will permanently delete the journey, all four sessions, session boards, and participant links.\n\nThis action cannot be undone.`
-    );
-
-    if (!confirmed) {
-      return;
-    }
-
+  const loadJourneys = async () => {
     try {
-      setDeletingJourneyId(journey.id);
+      setLoading(true);
 
-      const supabase = createClient();
+      const supabase =
+        createClient();
 
       const {
         data: { user },
-      } = await supabase.auth.getUser();
+      } =
+        await supabase.auth.getUser();
 
       if (!user) {
-        toast.error(
-          "You must be logged in to delete a journey."
+        navigate(
+          "/facilitator/login"
         );
-
-        navigate("/facilitator/login");
         return;
       }
 
-      /*
-       * The backend performs the actual deletion.
-       * The authenticated facilitator ID is sent so
-       * the backend can verify ownership.
-       */
-      const res = await fetch(
-        `${API}/journeys/${encodeURIComponent(
-          journey.id
-        )}`,
-        {
-          method: "DELETE",
-          headers: HEADERS,
-          body: JSON.stringify({
-            facilitatorId: user.id,
-          }),
-        }
+      setUserId(user.id);
+
+      setUserName(
+        user.user_metadata?.name?.split(
+          " "
+        )[0] || "Facilitator"
       );
 
-      const responseText = await res.text();
-
-      let data: any;
-
-      try {
-        data = JSON.parse(responseText);
-      } catch {
-        throw new Error(
-          `Invalid server response (${res.status})`
+      const res =
+        await fetch(
+          `${API}/journeys/facilitator/${user.id}`,
+          {
+            headers: HEADERS,
+          }
         );
+
+      const data =
+        await res.json();
+
+      if (!res.ok) {
+        console.error(
+          "Failed to load journeys:",
+          data
+        );
+        return;
       }
 
-      console.log(
-        "[dashboard] Delete journey response:",
-        data
-      );
+      if (data.success) {
+        const owned =
+          (data.journeys as Journey[]).filter(
+            (journey) => {
+              const belongsToUser =
+                journey.facilitatorId ===
+                user.id;
 
-      if (!res.ok || !data.success) {
-        throw new Error(
-          data?.error ||
-            "Failed to delete journey"
+              if (!belongsToUser) {
+                console.warn(
+                  `[dashboard] Ignoring journey "${journey.title}" because it does not belong to the current facilitator.`
+                );
+              }
+
+              return belongsToUser;
+            }
+          );
+
+        console.log(
+          `[dashboard] auth.uid=${user.id} total_returned=${data.journeys.length} owned=${owned.length}`
+        );
+
+        setJourneys(
+          owned
         );
       }
-
-      setJourneys((current) =>
-        current.filter(
-          (item) => item.id !== journey.id
-        )
-      );
-
-      toast.success(
-        "Journey deleted successfully."
-      );
-    } catch (error: any) {
+    } catch (error) {
       console.error(
-        "[dashboard] Delete journey error:",
+        "Failed to load journeys:",
         error
       );
-
-      toast.error(
-        error?.message ||
-          "Failed to delete journey."
-      );
     } finally {
-      setDeletingJourneyId(null);
+      setLoading(false);
     }
   };
 
@@ -619,19 +466,127 @@ export default function FacilitatorDashboard() {
     sessions: SessionEntry[]
   ) =>
     sessions.find(
-      (s) => s.status === "in_progress"
+      (session) =>
+        session.status ===
+        "in_progress"
     ) ||
     sessions.find(
-      (s) => s.status === "available"
+      (session) =>
+        session.status ===
+        "available"
     );
 
-  const activeJourneys = journeys.filter(
-    (j) => j.status !== "completed"
-  );
+  const activeJourneys =
+    journeys.filter(
+      (journey) =>
+        journey.status !==
+        "completed"
+    );
 
-  const completedJourneys = journeys.filter(
-    (j) => j.status === "completed"
-  );
+  const completedJourneys =
+    journeys.filter(
+      (journey) =>
+        journey.status ===
+        "completed"
+    );
+
+  const totalParticipants =
+    journeys.reduce(
+      (total, journey) =>
+        total +
+        (journey.participants
+          ?.length || 0),
+      0
+    );
+
+  const requestDeleteJourney = (
+    journey: Journey
+  ) => {
+    setDeleteTarget(
+      journey
+    );
+  };
+
+  const cancelDelete = () => {
+    if (deleting) return;
+
+    setDeleteTarget(
+      null
+    );
+  };
+
+  const confirmDelete = async () => {
+    if (
+      !deleteTarget ||
+      !userId
+    ) {
+      return;
+    }
+
+    setDeleting(true);
+
+    try {
+      const res =
+        await fetch(
+          `${API}/journeys/${deleteTarget.id}`,
+          {
+            method: "DELETE",
+            headers: HEADERS,
+            body: JSON.stringify({
+              facilitatorId:
+                userId,
+            }),
+          }
+        );
+
+      const data =
+        await res.json();
+
+      if (!res.ok || !data.success) {
+        console.error(
+          "Delete journey failed:",
+          data
+        );
+
+        window.alert(
+          data.error ||
+            "Failed to delete the journey."
+        );
+
+        return;
+      }
+
+      // Remove immediately from UI.
+      setJourneys(
+        (current) =>
+          current.filter(
+            (journey) =>
+              journey.id !==
+              deleteTarget.id
+          )
+      );
+
+      setDeleteTarget(
+        null
+      );
+
+      console.log(
+        "Journey deleted successfully:",
+        data.deleted
+      );
+    } catch (error) {
+      console.error(
+        "Delete journey error:",
+        error
+      );
+
+      window.alert(
+        "Something went wrong while deleting the journey."
+      );
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   return (
     <DashboardLayout role="facilitator">
@@ -649,46 +604,22 @@ export default function FacilitatorDashboard() {
           }}
           className="mb-8"
         >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h1
-                className="mb-2"
-                style={{
-                  fontFamily:
-                    "Playfair Display, serif",
-                }}
-              >
-                Welcome back, {userName}
-              </h1>
+          <h1
+            className="mb-2"
+            style={{
+              fontFamily:
+                "Playfair Display, serif",
+            }}
+          >
+            Welcome back,{" "}
+            {userName}
+          </h1>
 
-              <p className="text-muted-foreground">
-                Manage your Zest Journeys and guide
-                participants through each session
-              </p>
-            </div>
-
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                loadJourneys(true)
-              }
-              disabled={
-                loading || refreshing
-              }
-              className="flex-shrink-0"
-            >
-              {refreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-
-              <span className="hidden sm:inline ml-2">
-                Refresh
-              </span>
-            </Button>
-          </div>
+          <p className="text-muted-foreground">
+            Manage your Zest Journeys
+            and guide participants
+            through each session
+          </p>
         </motion.div>
 
         {/* Stats */}
@@ -708,58 +639,68 @@ export default function FacilitatorDashboard() {
         >
           {[
             {
-              label: "Total Journeys",
+              label:
+                "Total Journeys",
               value: loading
                 ? "—"
                 : journeys.length,
-              color: "#4A1C5C",
+              color:
+                "#4A1C5C",
             },
             {
               label: "Active",
               value: loading
                 ? "—"
                 : activeJourneys.length,
-              color: "#3D6D6C",
+              color:
+                "#3D6D6C",
             },
             {
-              label: "Participants",
+              label:
+                "Participants",
               value: loading
                 ? "—"
-                : journeys.reduce(
-                    (count, journey) =>
-                      count +
-                      (journey.participants
-                        ?.length || 0),
-                    0
-                  ),
-              color: "#D4A843",
+                : totalParticipants,
+              color:
+                "#D4A843",
             },
             {
-              label: "Completed",
+              label:
+                "Completed",
               value: loading
                 ? "—"
                 : completedJourneys.length,
-              color: "#AA5D53",
+              color:
+                "#AA5D53",
             },
-          ].map((stat) => (
-            <Card
-              key={stat.label}
-              className="p-4 sm:p-5"
-            >
-              <p
-                className="text-2xl sm:text-3xl font-bold mb-1"
-                style={{
-                  color: stat.color,
-                }}
+          ].map(
+            (stat) => (
+              <Card
+                key={
+                  stat.label
+                }
+                className="p-4 sm:p-5"
               >
-                {stat.value}
-              </p>
+                <p
+                  className="text-2xl sm:text-3xl font-bold mb-1"
+                  style={{
+                    color:
+                      stat.color,
+                  }}
+                >
+                  {
+                    stat.value
+                  }
+                </p>
 
-              <p className="text-xs sm:text-sm text-muted-foreground">
-                {stat.label}
-              </p>
-            </Card>
-          ))}
+                <p className="text-xs sm:text-sm text-muted-foreground">
+                  {
+                    stat.label
+                  }
+                </p>
+              </Card>
+            )
+          )}
         </motion.div>
 
         {/* CTA */}
@@ -791,8 +732,9 @@ export default function FacilitatorDashboard() {
                 </h2>
 
                 <p className="text-white/80 text-sm">
-                  Create a 4-session journey and
-                  open Session 1 with your
+                  Create a 4-session
+                  journey and open
+                  Session 1 with your
                   participant
                 </p>
               </div>
@@ -829,7 +771,8 @@ export default function FacilitatorDashboard() {
           <div className="flex items-center justify-between mb-4">
             <h3
               style={{
-                color: "#3D6D6C",
+                color:
+                  "#3D6D6C",
               }}
             >
               Your Journeys
@@ -846,7 +789,6 @@ export default function FacilitatorDashboard() {
               className="text-[#4A1C5C]"
             >
               View All
-
               <ArrowRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
@@ -855,7 +797,8 @@ export default function FacilitatorDashboard() {
             <Card className="p-12 flex items-center justify-center">
               <Loader2 className="w-6 h-6 animate-spin text-[#4A1C5C]" />
             </Card>
-          ) : journeys.length === 0 ? (
+          ) : journeys.length ===
+            0 ? (
             <Card className="p-12 text-center">
               <FolderOpen className="w-12 h-12 text-muted-foreground mx-auto mb-3 opacity-20" />
 
@@ -864,8 +807,9 @@ export default function FacilitatorDashboard() {
               </h4>
 
               <p className="text-sm text-muted-foreground mb-4">
-                Create your first Zest Journey
-                to get started
+                Create your first
+                Zest Journey to get
+                started
               </p>
 
               <Button
@@ -883,9 +827,13 @@ export default function FacilitatorDashboard() {
           ) : (
             <div className="space-y-4">
               {journeys.map(
-                (journey, index) => {
-                  const sessions: SessionEntry[] =
-                    journey.sessions || [];
+                (
+                  journey,
+                  index
+                ) => {
+                  const sessions =
+                    journey.sessions ||
+                    [];
 
                   const completedCount =
                     sessions.filter(
@@ -896,7 +844,8 @@ export default function FacilitatorDashboard() {
 
                   const progressPct =
                     Math.round(
-                      (completedCount / 4) *
+                      (completedCount /
+                        4) *
                         100
                     );
 
@@ -905,21 +854,22 @@ export default function FacilitatorDashboard() {
                       sessions
                     );
 
-                  const nextMeta = next
-                    ? SESSION_META.find(
-                        (meta) =>
-                          meta.number ===
-                          next.number
-                      )
-                    : null;
-
-                  const isDeleting =
-                    deletingJourneyId ===
-                    journey.id;
+                  const nextMeta =
+                    next
+                      ? SESSION_META.find(
+                          (
+                            meta
+                          ) =>
+                            meta.number ===
+                            next.number
+                        )
+                      : null;
 
                   return (
                     <motion.div
-                      key={journey.id}
+                      key={
+                        journey.id
+                      }
                       initial={{
                         opacity: 0,
                         x: -16,
@@ -930,17 +880,20 @@ export default function FacilitatorDashboard() {
                       }}
                       transition={{
                         delay:
-                          0.05 * index,
+                          0.05 *
+                          index,
                       }}
                       className="bg-white rounded-xl border border-border p-4 sm:p-5 hover:shadow-md hover:border-[#4A1C5C]/20 transition-all"
                     >
                       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
 
-                        {/* Journey info */}
+                        {/* Journey information */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
                             <h4 className="font-semibold text-foreground">
-                              {journey.title}
+                              {
+                                journey.title
+                              }
                             </h4>
 
                             <Badge
@@ -958,7 +911,6 @@ export default function FacilitatorDashboard() {
                             </Badge>
                           </div>
 
-                          {/* Participant */}
                           {journey.participantEmail ? (
                             <p className="text-xs text-muted-foreground flex items-center gap-1 mb-3">
                               <Users className="w-3 h-3" />
@@ -969,7 +921,8 @@ export default function FacilitatorDashboard() {
 
                               {(journey.participants
                                 ?.length ||
-                                0) > 1 &&
+                                0) >
+                                1 &&
                                 ` +${
                                   journey
                                     .participants
@@ -986,10 +939,14 @@ export default function FacilitatorDashboard() {
                           {/* Session pips */}
                           <div className="flex items-center gap-3">
                             {SESSION_META.map(
-                              (meta) => {
+                              (
+                                meta
+                              ) => {
                                 const entry =
                                   sessions.find(
-                                    (session) =>
+                                    (
+                                      session
+                                    ) =>
                                       session.number ===
                                       meta.number
                                   );
@@ -1012,6 +969,7 @@ export default function FacilitatorDashboard() {
                                       color={
                                         meta.color
                                       }
+
                                     />
 
                                     <span className="text-[10px] text-muted-foreground hidden sm:inline">
@@ -1026,11 +984,14 @@ export default function FacilitatorDashboard() {
                             )}
 
                             <span className="text-xs text-muted-foreground ml-1">
-                              {progressPct}%
+                              {
+                                progressPct
+                              }
+                              %
                             </span>
                           </div>
 
-                          {/* Progress bar */}
+                          {/* Progress */}
                           <div className="w-full bg-[#EBE2D6] rounded-full h-1 mt-2 max-w-xs">
                             <div
                               className="bg-[#4A1C5C] h-1 rounded-full transition-all"
@@ -1052,9 +1013,6 @@ export default function FacilitatorDashboard() {
                                 `/facilitator/journey/${journey.id}`
                               )
                             }
-                            disabled={
-                              isDeleting
-                            }
                             className="flex-1 sm:flex-none"
                           >
                             Manage
@@ -1069,9 +1027,6 @@ export default function FacilitatorDashboard() {
                                   nextMeta?.color ||
                                   "#4A1C5C",
                               }}
-                              disabled={
-                                isDeleting
-                              }
                               onClick={() =>
                                 navigate(
                                   `/facilitator/session/${next.id}/board`
@@ -1105,9 +1060,6 @@ export default function FacilitatorDashboard() {
                               <Button
                                 size="sm"
                                 variant="outline"
-                                disabled={
-                                  isDeleting
-                                }
                                 className="flex-1 sm:flex-none text-[#3D6D6C] border-[#3D6D6C]"
                                 onClick={() =>
                                   navigate(
@@ -1120,29 +1072,19 @@ export default function FacilitatorDashboard() {
                               </Button>
                             )}
 
-                          {/* Delete */}
+                          {/* DELETE */}
                           <Button
                             size="sm"
                             variant="outline"
-                            disabled={
-                              isDeleting
-                            }
                             onClick={() =>
-                              handleDeleteJourney(
+                              requestDeleteJourney(
                                 journey
                               )
                             }
-                            className="flex-1 sm:flex-none text-[#AA5D53] border-[#AA5D53]/30 hover:bg-[#AA5D53]/10 hover:text-[#AA5D53]"
+                            className="flex-1 sm:flex-none text-[#AA5D53] border-[#AA5D53]/30 hover:bg-[#AA5D53]/10 hover:text-[#8F4B43]"
                           >
-                            {isDeleting ? (
-                              <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                            ) : (
-                              <Trash2 className="w-3.5 h-3.5 mr-1" />
-                            )}
-
-                            {isDeleting
-                              ? "Deleting..."
-                              : "Delete"}
+                            <Trash2 className="w-3.5 h-3.5 mr-1" />
+                            Delete
                           </Button>
                         </div>
                       </div>
@@ -1154,6 +1096,166 @@ export default function FacilitatorDashboard() {
           )}
         </motion.div>
       </div>
+
+      {/* ─────────────────────────────────────────────────────────────── */}
+      {/* DELETE CONFIRMATION MODAL                                      */}
+      {/* ─────────────────────────────────────────────────────────────── */}
+
+      <AnimatePresence>
+        {deleteTarget && (
+          <motion.div
+            initial={{
+              opacity: 0,
+            }}
+            animate={{
+              opacity: 1,
+            }}
+            exit={{
+              opacity: 0,
+            }}
+            className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
+          >
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-[#2C1810]/55 backdrop-blur-sm"
+              onClick={
+                deleting
+                  ? undefined
+                  : cancelDelete
+              }
+            />
+
+            {/* Modal */}
+            <motion.div
+              initial={{
+                opacity: 0,
+                scale: 0.94,
+                y: 12,
+              }}
+              animate={{
+                opacity: 1,
+                scale: 1,
+                y: 0,
+              }}
+              exit={{
+                opacity: 0,
+                scale: 0.94,
+                y: 12,
+              }}
+              transition={{
+                duration: 0.2,
+              }}
+              className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#EBE2D6]"
+            >
+              {/* Top accent */}
+              <div className="h-1.5 bg-gradient-to-r from-[#AA5D53] to-[#D4A843]" />
+
+              <div className="p-6 sm:p-7">
+
+                {/* Close */}
+                <button
+                  type="button"
+                  onClick={
+                    deleting
+                      ? undefined
+                      : cancelDelete
+                  }
+                  disabled={
+                    deleting
+                  }
+                  className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-40"
+                  aria-label="Close"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+
+                {/* Icon */}
+                <div className="w-12 h-12 rounded-full bg-[#AA5D53]/10 flex items-center justify-center mb-5">
+                  <AlertTriangle className="w-6 h-6 text-[#AA5D53]" />
+                </div>
+
+                {/* Heading */}
+                <h2
+                  className="text-xl sm:text-2xl font-semibold text-[#3A1C2B] mb-2"
+                  style={{
+                    fontFamily:
+                      "Playfair Display, serif",
+                  }}
+                >
+                  Delete this journey?
+                </h2>
+
+                {/* Journey title */}
+                <div className="bg-[#EBE2D6]/55 border border-[#EBE2D6] rounded-xl px-4 py-3 mb-4">
+                  <p className="text-xs text-muted-foreground mb-1">
+                    Journey
+                  </p>
+
+                  <p className="font-semibold text-[#4A1C5C] truncate">
+                    {
+                      deleteTarget.title
+                    }
+                  </p>
+                </div>
+
+                {/* Warning */}
+                <p className="text-sm leading-relaxed text-gray-600 mb-2">
+                  This will permanently
+                  delete the journey,
+                  all four sessions,
+                  session boards, and
+                  participant links.
+                </p>
+
+                <p className="text-sm font-medium text-[#AA5D53] mb-6">
+                  This action cannot be
+                  undone.
+                </p>
+
+                {/* Actions */}
+                <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={
+                      cancelDelete
+                    }
+                    disabled={
+                      deleting
+                    }
+                    className="w-full sm:w-auto rounded-xl border-gray-200"
+                  >
+                    Cancel
+                  </Button>
+
+                  <Button
+                    type="button"
+                    onClick={
+                      confirmDelete
+                    }
+                    disabled={
+                      deleting
+                    }
+                    className="w-full sm:w-auto rounded-xl bg-[#AA5D53] hover:bg-[#934D45] text-white shadow-sm"
+                  >
+                    {deleting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Deleting...
+                      </>
+                    ) : (
+                      <>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Delete Journey
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </DashboardLayout>
   );
 }
