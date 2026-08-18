@@ -235,10 +235,12 @@
 
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router";
+
 import DashboardLayout from "../../components/DashboardLayout";
 import { Card } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
+
 import {
   Plus,
   Users,
@@ -252,17 +254,26 @@ import {
   Trash2,
   X,
   AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
-import { motion, AnimatePresence } from "motion/react";
+
+import {
+  motion,
+  AnimatePresence,
+} from "motion/react";
+
 import { createClient } from "../../../utils/supabase/client";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { projectId } from "../../../utils/supabase/info";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API
+// ─────────────────────────────────────────────────────────────────────────────
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
 
-const HEADERS = {
-  "Content-Type": "application/json",
-  "Authorization": `Bearer ${publicAnonKey}`,
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// TYPES
+// ─────────────────────────────────────────────────────────────────────────────
 
 type SessionStatus =
   | "locked"
@@ -288,6 +299,10 @@ interface Journey {
   sessionId: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION METADATA
+// ─────────────────────────────────────────────────────────────────────────────
+
 const SESSION_META = [
   {
     number: 1,
@@ -311,6 +326,10 @@ const SESSION_META = [
   },
 ];
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SESSION PIP
+// ─────────────────────────────────────────────────────────────────────────────
+
 function SessionPip({
   status,
   color,
@@ -322,7 +341,9 @@ function SessionPip({
     return (
       <div
         className="w-4 h-4 rounded-full flex items-center justify-center"
-        style={{ backgroundColor: color }}
+        style={{
+          backgroundColor: color,
+        }}
       >
         <CheckCircle className="w-2.5 h-2.5 text-white" />
       </div>
@@ -345,7 +366,9 @@ function SessionPip({
     return (
       <div
         className="w-4 h-4 rounded-full border-2"
-        style={{ borderColor: color }}
+        style={{
+          borderColor: color,
+        }}
       />
     );
   }
@@ -355,6 +378,10 @@ function SessionPip({
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// MAIN
+// ─────────────────────────────────────────────────────────────────────────────
+
 export default function FacilitatorDashboard() {
   const navigate = useNavigate();
 
@@ -363,6 +390,9 @@ export default function FacilitatorDashboard() {
 
   const [loading, setLoading] =
     useState(true);
+
+  const [refreshing, setRefreshing] =
+    useState(false);
 
   const [userName, setUserName] =
     useState("Facilitator");
@@ -376,26 +406,77 @@ export default function FacilitatorDashboard() {
   const [deleting, setDeleting] =
     useState(false);
 
-  useEffect(() => {
-    loadJourneys();
-  }, []);
+  // ───────────────────────────────────────────────────────────────────────────
+  // LOAD JOURNEYS
+  //
+  // IMPORTANT:
+  // Do NOT use publicAnonKey for protected journey requests.
+  // Always get the authenticated Supabase session and use its access_token.
+  // ───────────────────────────────────────────────────────────────────────────
 
-  const loadJourneys = async () => {
+  const loadJourneys = async (
+    showRefreshLoader = false
+  ) => {
     try {
-      setLoading(true);
+      if (showRefreshLoader) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
       const supabase =
         createClient();
 
+      // ─────────────────────────────────────
+      // GET AUTHENTICATED SESSION
+      // ─────────────────────────────────────
+
       const {
-        data: { user },
+        data: {
+          session: authSession,
+        },
+        error: authError,
       } =
-        await supabase.auth.getUser();
+        await supabase.auth.getSession();
+
+      if (
+        authError ||
+        !authSession?.access_token
+      ) {
+        console.error(
+          "[facilitator-dashboard] Authentication error:",
+          authError
+        );
+
+        setJourneys([]);
+
+        navigate(
+          "/facilitator/login",
+          {
+            replace: true,
+          }
+        );
+
+        return;
+      }
+
+      // ─────────────────────────────────────
+      // AUTHENTICATED USER
+      // ─────────────────────────────────────
+
+      const user =
+        authSession.user;
 
       if (!user) {
+        setJourneys([]);
+
         navigate(
-          "/facilitator/login"
+          "/facilitator/login",
+          {
+            replace: true,
+          }
         );
+
         return;
       }
 
@@ -404,63 +485,185 @@ export default function FacilitatorDashboard() {
       setUserName(
         user.user_metadata?.name?.split(
           " "
-        )[0] || "Facilitator"
+        )[0] ||
+          "Facilitator"
       );
 
-      const res =
+      // ─────────────────────────────────────
+      // REAL SUPABASE ACCESS TOKEN
+      //
+      // This is the important fix.
+      // ─────────────────────────────────────
+
+      const accessToken =
+        authSession.access_token;
+
+      const headers: HeadersInit = {
+        "Content-Type":
+          "application/json",
+
+        Authorization:
+          `Bearer ${accessToken}`,
+      };
+
+      // ─────────────────────────────────────
+      // LOAD FACILITATOR JOURNEYS
+      // ─────────────────────────────────────
+
+      const response =
         await fetch(
           `${API}/journeys/facilitator/${user.id}`,
           {
-            headers: HEADERS,
+            method: "GET",
+            headers,
+            cache: "no-store",
           }
         );
 
-      const data =
-        await res.json();
+      let data: any = null;
 
-      if (!res.ok) {
+      try {
+        data =
+          await response.json();
+      } catch (jsonError) {
         console.error(
-          "Failed to load journeys:",
-          data
+          "[facilitator-dashboard] Failed to parse API response:",
+          jsonError
         );
+      }
+
+      if (!response.ok) {
+        console.error(
+          "[facilitator-dashboard] Failed to load journeys:",
+          {
+            status:
+              response.status,
+            data,
+          }
+        );
+
+        setJourneys([]);
         return;
       }
 
-      if (data.success) {
-        const owned =
-          (data.journeys as Journey[]).filter(
-            (journey) => {
-              const belongsToUser =
-                journey.facilitatorId ===
-                user.id;
-
-              if (!belongsToUser) {
-                console.warn(
-                  `[dashboard] Ignoring journey "${journey.title}" because it does not belong to the current facilitator.`
-                );
-              }
-
-              return belongsToUser;
-            }
-          );
-
-        console.log(
-          `[dashboard] auth.uid=${user.id} total_returned=${data.journeys.length} owned=${owned.length}`
+      if (!data?.success) {
+        console.error(
+          "[facilitator-dashboard] API error:",
+          data?.error
         );
 
-        setJourneys(
-          owned
-        );
+        setJourneys([]);
+        return;
       }
+
+      // ─────────────────────────────────────
+      // DEFENSIVE JOURNEY VALIDATION
+      // ─────────────────────────────────────
+
+      const returnedJourneys =
+        Array.isArray(
+          data.journeys
+        )
+          ? data.journeys
+          : [];
+
+      const owned =
+        returnedJourneys.filter(
+          (journey: Journey) => {
+            if (
+              !journey ||
+              typeof journey.id !==
+                "string"
+            ) {
+              return false;
+            }
+
+            const belongsToUser =
+              journey.facilitatorId ===
+              user.id;
+
+            if (!belongsToUser) {
+              console.warn(
+                `[facilitator-dashboard] Ignoring journey "${journey.title}" because it does not belong to the current facilitator.`
+              );
+            }
+
+            return belongsToUser;
+          }
+        );
+
+      // ─────────────────────────────────────
+      // NORMALIZE JOURNEYS
+      //
+      // Older journey records may not have
+      // participants or sessions.
+      // ─────────────────────────────────────
+
+      const normalizedJourneys =
+        owned.map(
+          (journey: Journey) => ({
+            ...journey,
+
+            description:
+              journey.description ||
+              "",
+
+            participantEmail:
+              journey.participantEmail ||
+              null,
+
+            participants:
+              Array.isArray(
+                journey.participants
+              )
+                ? journey.participants
+                : [],
+
+            sessions:
+              Array.isArray(
+                journey.sessions
+              )
+                ? journey.sessions
+                : [],
+          })
+        );
+
+      console.log(
+        `[facilitator-dashboard] auth.uid=${user.id} total_returned=${returnedJourneys.length} owned=${normalizedJourneys.length}`
+      );
+
+      console.log(
+        "[facilitator-dashboard] journeys:",
+        normalizedJourneys
+      );
+
+      setJourneys(
+        normalizedJourneys
+      );
     } catch (error) {
       console.error(
-        "Failed to load journeys:",
+        "[facilitator-dashboard] Failed to load journeys:",
         error
       );
+
+      setJourneys([]);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // INITIAL LOAD
+  // ───────────────────────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    loadJourneys();
+  }, []);
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // NEXT SESSION
+  // ───────────────────────────────────────────────────────────────────────────
 
   const getNextSession = (
     sessions: SessionEntry[]
@@ -475,6 +678,10 @@ export default function FacilitatorDashboard() {
         session.status ===
         "available"
     );
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // JOURNEY FILTERS
+  // ───────────────────────────────────────────────────────────────────────────
 
   const activeJourneys =
     journeys.filter(
@@ -499,6 +706,10 @@ export default function FacilitatorDashboard() {
       0
     );
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // DELETE JOURNEY
+  // ───────────────────────────────────────────────────────────────────────────
+
   const requestDeleteJourney = (
     journey: Journey
   ) => {
@@ -508,7 +719,9 @@ export default function FacilitatorDashboard() {
   };
 
   const cancelDelete = () => {
-    if (deleting) return;
+    if (deleting) {
+      return;
+    }
 
     setDeleteTarget(
       null
@@ -518,7 +731,8 @@ export default function FacilitatorDashboard() {
   const confirmDelete = async () => {
     if (
       !deleteTarget ||
-      !userId
+      !userId ||
+      deleting
     ) {
       return;
     }
@@ -526,12 +740,65 @@ export default function FacilitatorDashboard() {
     setDeleting(true);
 
     try {
-      const res =
+      const supabase =
+        createClient();
+
+      // ─────────────────────────────────────
+      // GET FRESH AUTH SESSION
+      // ─────────────────────────────────────
+
+      const {
+        data: {
+          session: authSession,
+        },
+        error: authError,
+      } =
+        await supabase.auth.getSession();
+
+      if (
+        authError ||
+        !authSession?.access_token
+      ) {
+        console.error(
+          "[facilitator-dashboard] Delete authentication error:",
+          authError
+        );
+
+        window.alert(
+          "Your login session has expired. Please sign in again."
+        );
+
+        navigate(
+          "/facilitator/login",
+          {
+            replace: true,
+          }
+        );
+
+        return;
+      }
+
+      const accessToken =
+        authSession.access_token;
+
+      const headers: HeadersInit = {
+        "Content-Type":
+          "application/json",
+
+        Authorization:
+          `Bearer ${accessToken}`,
+      };
+
+      // ─────────────────────────────────────
+      // DELETE JOURNEY
+      // ─────────────────────────────────────
+
+      const response =
         await fetch(
           `${API}/journeys/${deleteTarget.id}`,
           {
             method: "DELETE",
-            headers: HEADERS,
+            headers,
             body: JSON.stringify({
               facilitatorId:
                 userId,
@@ -539,24 +806,39 @@ export default function FacilitatorDashboard() {
           }
         );
 
-      const data =
-        await res.json();
+      let data: any = null;
 
-      if (!res.ok || !data.success) {
+      try {
+        data =
+          await response.json();
+      } catch (jsonError) {
         console.error(
-          "Delete journey failed:",
+          "[facilitator-dashboard] Failed to parse delete response:",
+          jsonError
+        );
+      }
+
+      if (
+        !response.ok ||
+        !data?.success
+      ) {
+        console.error(
+          "[facilitator-dashboard] Delete journey failed:",
           data
         );
 
         window.alert(
-          data.error ||
+          data?.error ||
             "Failed to delete the journey."
         );
 
         return;
       }
 
-      // Remove immediately from UI.
+      // ─────────────────────────────────────
+      // REMOVE FROM UI
+      // ─────────────────────────────────────
+
       setJourneys(
         (current) =>
           current.filter(
@@ -571,12 +853,12 @@ export default function FacilitatorDashboard() {
       );
 
       console.log(
-        "Journey deleted successfully:",
+        "[facilitator-dashboard] Journey deleted successfully:",
         data.deleted
       );
     } catch (error) {
       console.error(
-        "Delete journey error:",
+        "[facilitator-dashboard] Delete journey error:",
         error
       );
 
@@ -588,11 +870,18 @@ export default function FacilitatorDashboard() {
     }
   };
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // RENDER
+  // ───────────────────────────────────────────────────────────────────────────
+
   return (
     <DashboardLayout role="facilitator">
       <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
 
-        {/* Header */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* HEADER */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+
         <motion.div
           initial={{
             opacity: 0,
@@ -604,25 +893,55 @@ export default function FacilitatorDashboard() {
           }}
           className="mb-8"
         >
-          <h1
-            className="mb-2"
-            style={{
-              fontFamily:
-                "Playfair Display, serif",
-            }}
-          >
-            Welcome back,{" "}
-            {userName}
-          </h1>
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h1
+                className="mb-2"
+                style={{
+                  fontFamily:
+                    "Playfair Display, serif",
+                }}
+              >
+                Welcome back,{" "}
+                {userName}
+              </h1>
 
-          <p className="text-muted-foreground">
-            Manage your Zest Journeys
-            and guide participants
-            through each session
-          </p>
+              <p className="text-muted-foreground">
+                Manage your Zest Journeys
+                and guide participants
+                through each session
+              </p>
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                loadJourneys(true)
+              }
+              disabled={
+                loading ||
+                refreshing
+              }
+              className="flex-shrink-0"
+            >
+              {refreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+
+              <span className="hidden sm:inline ml-2">
+                Refresh
+              </span>
+            </Button>
+          </div>
         </motion.div>
 
-        {/* Stats */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* STATS */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+
         <motion.div
           initial={{
             opacity: 0,
@@ -703,7 +1022,10 @@ export default function FacilitatorDashboard() {
           )}
         </motion.div>
 
+        {/* ─────────────────────────────────────────────────────────────────── */}
         {/* CTA */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+
         <motion.div
           initial={{
             opacity: 0,
@@ -754,7 +1076,10 @@ export default function FacilitatorDashboard() {
           </Card>
         </motion.div>
 
-        {/* Journey list */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+        {/* JOURNEY LIST */}
+        {/* ─────────────────────────────────────────────────────────────────── */}
+
         <motion.div
           initial={{
             opacity: 0,
@@ -888,6 +1213,7 @@ export default function FacilitatorDashboard() {
                       <div className="flex flex-col sm:flex-row sm:items-start gap-4">
 
                         {/* Journey information */}
+
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 flex-wrap mb-1">
                             <h4 className="font-semibold text-foreground">
@@ -937,6 +1263,7 @@ export default function FacilitatorDashboard() {
                           )}
 
                           {/* Session pips */}
+
                           <div className="flex items-center gap-3">
                             {SESSION_META.map(
                               (
@@ -969,7 +1296,6 @@ export default function FacilitatorDashboard() {
                                       color={
                                         meta.color
                                       }
-
                                     />
 
                                     <span className="text-[10px] text-muted-foreground hidden sm:inline">
@@ -992,6 +1318,7 @@ export default function FacilitatorDashboard() {
                           </div>
 
                           {/* Progress */}
+
                           <div className="w-full bg-[#EBE2D6] rounded-full h-1 mt-2 max-w-xs">
                             <div
                               className="bg-[#4A1C5C] h-1 rounded-full transition-all"
@@ -1003,6 +1330,7 @@ export default function FacilitatorDashboard() {
                         </div>
 
                         {/* Actions */}
+
                         <div className="flex flex-row sm:flex-col gap-2 flex-shrink-0">
 
                           <Button
@@ -1073,6 +1401,7 @@ export default function FacilitatorDashboard() {
                             )}
 
                           {/* DELETE */}
+
                           <Button
                             size="sm"
                             variant="outline"
@@ -1097,9 +1426,9 @@ export default function FacilitatorDashboard() {
         </motion.div>
       </div>
 
-      {/* ─────────────────────────────────────────────────────────────── */}
-      {/* DELETE CONFIRMATION MODAL                                      */}
-      {/* ─────────────────────────────────────────────────────────────── */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
+      {/* DELETE CONFIRMATION MODAL */}
+      {/* ─────────────────────────────────────────────────────────────────── */}
 
       <AnimatePresence>
         {deleteTarget && (
@@ -1116,6 +1445,7 @@ export default function FacilitatorDashboard() {
             className="fixed inset-0 z-[9999] flex items-center justify-center p-4"
           >
             {/* Backdrop */}
+
             <div
               className="absolute inset-0 bg-[#2C1810]/55 backdrop-blur-sm"
               onClick={
@@ -1126,6 +1456,7 @@ export default function FacilitatorDashboard() {
             />
 
             {/* Modal */}
+
             <motion.div
               initial={{
                 opacity: 0,
@@ -1148,11 +1479,13 @@ export default function FacilitatorDashboard() {
               className="relative w-full max-w-md bg-white rounded-2xl shadow-2xl overflow-hidden border border-[#EBE2D6]"
             >
               {/* Top accent */}
+
               <div className="h-1.5 bg-gradient-to-r from-[#AA5D53] to-[#D4A843]" />
 
               <div className="p-6 sm:p-7">
 
                 {/* Close */}
+
                 <button
                   type="button"
                   onClick={
@@ -1170,11 +1503,13 @@ export default function FacilitatorDashboard() {
                 </button>
 
                 {/* Icon */}
+
                 <div className="w-12 h-12 rounded-full bg-[#AA5D53]/10 flex items-center justify-center mb-5">
                   <AlertTriangle className="w-6 h-6 text-[#AA5D53]" />
                 </div>
 
                 {/* Heading */}
+
                 <h2
                   className="text-xl sm:text-2xl font-semibold text-[#3A1C2B] mb-2"
                   style={{
@@ -1186,6 +1521,7 @@ export default function FacilitatorDashboard() {
                 </h2>
 
                 {/* Journey title */}
+
                 <div className="bg-[#EBE2D6]/55 border border-[#EBE2D6] rounded-xl px-4 py-3 mb-4">
                   <p className="text-xs text-muted-foreground mb-1">
                     Journey
@@ -1199,6 +1535,7 @@ export default function FacilitatorDashboard() {
                 </div>
 
                 {/* Warning */}
+
                 <p className="text-sm leading-relaxed text-gray-600 mb-2">
                   This will permanently
                   delete the journey,
@@ -1213,6 +1550,7 @@ export default function FacilitatorDashboard() {
                 </p>
 
                 {/* Actions */}
+
                 <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
                   <Button
                     type="button"
