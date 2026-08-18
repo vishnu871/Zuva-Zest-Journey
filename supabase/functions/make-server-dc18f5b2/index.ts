@@ -1106,13 +1106,6 @@ async function ensureJourneySessions(
 // SESSION ACCESS CONTROL
 // ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * General session access helper.
- *
- * Facilitators can access sessions belonging to their own journey.
- * Participant access is handled separately through
- * canParticipantOpenSession().
- */
 function canOpenSession(
   session: any,
   role?: UserRole
@@ -1126,109 +1119,6 @@ function canOpenSession(
     "facilitator"
   ) {
     return true;
-  }
-
-  return (
-    session.status ===
-      "available" ||
-    session.status ===
-      "in_progress" ||
-    session.status ===
-      "completed"
-  );
-}
-
-/**
- * Strict participant session access.
- *
- * Session 1:
- *   available / in_progress / completed
- *
- * Session 2:
- *   Session 1 MUST be completed
- *   AND Session 2 must not be locked.
- *
- * Session 3:
- *   Session 2 MUST be completed
- *   AND Session 3 must not be locked.
- *
- * Session 4:
- *   Session 3 MUST be completed
- *   AND Session 4 must not be locked.
- *
- * IMPORTANT:
- * "available" means the facilitator has explicitly enabled
- * the session. Completing the previous session does NOT
- * automatically make the next session available.
- */
-function canParticipantOpenSession(
-  journey: any,
-  session: any
-) {
-  if (
-    !journey ||
-    !session
-  ) {
-    return false;
-  }
-
-  const sessionNumber =
-    Number(
-      session.sessionNumber
-    );
-
-  if (
-    !Number.isInteger(
-      sessionNumber
-    ) ||
-    sessionNumber < 1 ||
-    sessionNumber > 4
-  ) {
-    return false;
-  }
-
-  // Locked means the facilitator has not enabled
-  // the session yet.
-  if (
-    session.status ===
-    "locked"
-  ) {
-    return false;
-  }
-
-  // Session 1 has no previous-session dependency.
-  if (
-    sessionNumber === 1
-  ) {
-    return (
-      session.status ===
-        "available" ||
-      session.status ===
-        "in_progress" ||
-      session.status ===
-        "completed"
-    );
-  }
-
-  const previousSession =
-    (
-      journey.sessions ||
-      []
-    ).find(
-      (item: any) =>
-        Number(
-          item.number
-        ) ===
-        sessionNumber - 1
-    );
-
-  // The previous session MUST be completed.
-  if (
-    !previousSession ||
-    previousSession.status !==
-      "completed"
-  ) {
-    return false;
   }
 
   return (
@@ -1956,13 +1846,10 @@ app.post(
         user: {
           id:
             data.user.id,
-
           email:
             data.user.email,
-
           fullName:
             fullName.trim(),
-
           role,
         },
       });
@@ -2035,6 +1922,10 @@ app.post(
   `${P}/journeys`,
   async (c) => {
     try {
+      // ─────────────────────────────────────
+      // ONLY FACILITATORS CAN CREATE JOURNEYS
+      // ─────────────────────────────────────
+
       const auth =
         await requireRole(
           c,
@@ -2045,15 +1936,22 @@ app.post(
         return auth.response;
       }
 
+      // ─────────────────────────────────────
+      // REQUEST BODY
+      // ─────────────────────────────────────
+
       const {
         title,
         description,
         facilitatorId,
         facilitatorEmail,
+        sessionNumber,
       } =
         await c.req.json();
 
-      if (!title) {
+      if (
+        !title
+      ) {
         return c.json(
           {
             error:
@@ -2062,6 +1960,19 @@ app.post(
           400
         );
       }
+
+      // ─────────────────────────────────────
+      // NORMALIZE STARTING SESSION
+      // ─────────────────────────────────────
+
+      const startingSessionNumber =
+        normalizeSessionNumber(
+          sessionNumber
+        ) || 1;
+
+      // ─────────────────────────────────────
+      // AUTHENTICATED FACILITATOR
+      // ─────────────────────────────────────
 
       const authenticatedFacilitatorId =
         auth.user.id;
@@ -2080,19 +1991,39 @@ app.post(
         );
       }
 
+      // ─────────────────────────────────────
+      // CREATE JOURNEY ID
+      // ─────────────────────────────────────
+
       const journeyId =
         crypto.randomUUID();
+
+      // ─────────────────────────────────────
+      // CREATE FOUR SESSION IDS
+      // ─────────────────────────────────────
 
       const sessionIds = {
         1:
           crypto.randomUUID(),
+
         2:
           crypto.randomUUID(),
+
         3:
           crypto.randomUUID(),
+
         4:
           crypto.randomUUID(),
       };
+
+      // ─────────────────────────────────────
+      // CREATE SESSION RECORDS
+      //
+      // ONLY THE SELECTED STARTING SESSION
+      // IS AVAILABLE.
+      //
+      // ALL OTHER SESSIONS ARE LOCKED.
+      // ─────────────────────────────────────
 
       const sessions =
         SESSION_NUMBERS.map(
@@ -2108,11 +2039,16 @@ app.post(
             number,
 
             status:
-              number === 1
+              number ===
+              startingSessionNumber
                 ? "available" as SessionStatus
                 : "locked" as SessionStatus,
           })
         );
+
+      // ─────────────────────────────────────
+      // JOURNEY RECORD
+      // ─────────────────────────────────────
 
       const journey = {
         id:
@@ -2142,10 +2078,12 @@ app.post(
           "active",
 
         sessionId:
-          sessionIds[1],
+          sessionIds[
+            startingSessionNumber as
+              1 | 2 | 3 | 4
+          ],
 
-        startingSessionNumber:
-          1,
+        startingSessionNumber,
 
         sessions,
 
@@ -2156,6 +2094,10 @@ app.post(
       await saveJourney(
         journey
       );
+
+      // ─────────────────────────────────────
+      // CREATE SESSION + BOARD RECORDS
+      // ─────────────────────────────────────
 
       for (
         const session of
@@ -2190,6 +2132,10 @@ app.post(
         );
       }
 
+      // ─────────────────────────────────────
+      // FACILITATOR JOURNEY INDEX
+      // ─────────────────────────────────────
+
       const facilitatorKey =
         `facilitator:${authenticatedFacilitatorId}:journeys`;
 
@@ -2213,20 +2159,43 @@ app.post(
         );
       }
 
+      // ─────────────────────────────────────
+      // RESPONSE
+      // ─────────────────────────────────────
+
+      const startingSession =
+        sessions.find(
+          (
+            session
+          ) =>
+            session.number ===
+            startingSessionNumber
+        );
+
       return c.json({
         success: true,
+
         journey,
+
         sessionId:
-          sessionIds[1],
+          startingSession?.id ||
+          null,
 
         session: {
           id:
-            sessionIds[1],
+            startingSession?.id ||
+            null,
 
-          number: 1,
+          number:
+            startingSessionNumber,
 
           label:
-            "Session 1",
+            `Session ${startingSessionNumber}`,
+
+          name:
+            SESSION_NAMES[
+              startingSessionNumber
+            ],
 
           status:
             "available",
@@ -2240,6 +2209,7 @@ app.post(
 
       return c.json(
         {
+          success: false,
           error:
             String(error),
         },
@@ -2479,7 +2449,6 @@ app.get(
         );
       }
 
-      // Remove stale participant journey references.
       await kv.set(
         key,
         validIds
@@ -3199,25 +3168,19 @@ app.get(
         );
       }
 
-      // ─────────────────────────────────────────
-      // STRICT PARTICIPANT ACCESS
-      // ─────────────────────────────────────────
-
       if (
         auth.user.role ===
           "participant" &&
-        !canParticipantOpenSession(
-          journey,
-          session
+        !canOpenSession(
+          session,
+          "participant"
         )
       ) {
         return c.json(
           {
             success: false,
-
             error:
-              "This session is locked. The facilitator must complete the previous session and enable this session before you can access it.",
-
+              "This session is locked. The facilitator must enable it before you can start it.",
             code:
               "SESSION_LOCKED",
           },
@@ -3260,11 +3223,8 @@ app.get(
 
       return c.json({
         success: true,
-
         session,
-
         journey,
-
         previousBoards,
       });
     } catch (error) {
@@ -3319,7 +3279,7 @@ app.get(
         );
       }
 
-      let journey =
+      const journey =
         await getJourney(
           session.journeyId
         );
@@ -3333,11 +3293,6 @@ app.get(
           404
         );
       }
-
-      journey =
-        await ensureJourneySessions(
-          journey
-        );
 
       const facilitatorAccess =
         auth.user.role ===
@@ -3367,23 +3322,18 @@ app.get(
         );
       }
 
-      // ─────────────────────────────────────────
-      // STRICT PARTICIPANT ACCESS
-      // ─────────────────────────────────────────
-
       if (
         auth.user.role ===
           "participant" &&
-        !canParticipantOpenSession(
-          journey,
-          session
+        !canOpenSession(
+          session,
+          "participant"
         )
       ) {
         return c.json(
           {
             error:
-              "This session is locked. The facilitator must enable it before you can access it.",
-
+              "This session is locked.",
             code:
               "SESSION_LOCKED",
           },
@@ -3459,7 +3409,7 @@ app.put(
         );
       }
 
-      let journey =
+      const journey =
         await getJourney(
           session.journeyId
         );
@@ -3473,11 +3423,6 @@ app.put(
           404
         );
       }
-
-      journey =
-        await ensureJourneySessions(
-          journey
-        );
 
       const facilitatorAccess =
         auth.user.role ===
@@ -3507,16 +3452,12 @@ app.put(
         );
       }
 
-      // ─────────────────────────────────────────
-      // STRICT PARTICIPANT ACCESS
-      // ─────────────────────────────────────────
-
       if (
         auth.user.role ===
           "participant" &&
-        !canParticipantOpenSession(
-          journey,
-          session
+        !canOpenSession(
+          session,
+          "participant"
         )
       ) {
         return c.json(
@@ -3629,9 +3570,6 @@ app.put(
         );
       }
 
-      // IMPORTANT:
-      // This must be `let`, because ensureJourneySessions()
-      // may return an updated journey object.
       let journey =
         await getJourney(
           session.journeyId
@@ -3672,9 +3610,9 @@ app.put(
         SessionStatus =
         session.status;
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // PARTICIPANT STATUS RULES
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         auth.user.role ===
@@ -3689,7 +3627,6 @@ app.put(
         ) {
           return c.json(
             {
-              success: false,
               error:
                 "You are not linked to this journey.",
             },
@@ -3697,7 +3634,9 @@ app.put(
           );
         }
 
-        // A participant can NEVER modify a locked session.
+        // Participants may NEVER unlock
+        // a locked session.
+
         if (
           currentStatus ===
           "locked"
@@ -3714,17 +3653,18 @@ app.put(
           );
         }
 
-        // A participant can NEVER modify a completed session.
-        // Completed sessions are review-only.
+        // Participants cannot complete
+        // sessions.
+
         if (
-          currentStatus ===
+          status ===
           "completed"
         ) {
           return c.json(
             {
               success: false,
               error:
-                "This session has already been completed. Only the facilitator can change its status.",
+                "Only the facilitator can complete or end a session.",
               code:
                 "FACILITATOR_ONLY",
             },
@@ -3732,58 +3672,37 @@ app.put(
           );
         }
 
-        // The previous session must have been completed.
-        // This prevents stale/malformed session records from
-        // allowing participants to skip ahead.
-        if (
-          !canParticipantOpenSession(
-            journey,
-            session
-          )
-        ) {
-          return c.json(
-            {
-              success: false,
-              error:
-                "The previous session must be completed and this session must be enabled by the facilitator first.",
-              code:
-                "SESSION_LOCKED",
-            },
-            403
-          );
-        }
+        // Participants may only move an
+        // available session into progress.
 
-        // Participants can ONLY start/continue a session.
         if (
           status !==
-          "in_progress"
+            "in_progress" &&
+          status !==
+            currentStatus
         ) {
           return c.json(
             {
               success: false,
               error:
-                "Participants can only start or continue an enabled session.",
-              code:
-                "FACILITATOR_ONLY",
+                "Participants cannot change this session status.",
             },
             403
           );
         }
 
-        // Available -> In Progress
-        // In Progress -> In Progress
         session.status =
           "in_progress";
 
         session.updatedAt =
           new Date().toISOString();
 
-        journeySession.status =
-          "in_progress";
-
         await saveSession(
           session
         );
+
+        journeySession.status =
+          "in_progress";
 
         await saveJourney(
           journey
@@ -3796,9 +3715,9 @@ app.put(
         });
       }
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // FACILITATOR RULES
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         auth.user.role !==
@@ -3849,9 +3768,9 @@ app.put(
         );
       }
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // FACILITATOR ENABLES SESSION
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         requestedStatus ===
@@ -3862,10 +3781,11 @@ app.put(
             session.sessionNumber
           );
 
-        // Session 1 can be made available normally.
+        // Session 1 can be enabled directly.
         //
-        // Session 2/3/4 require the previous session
-        // to be completed first.
+        // Session 2/3/4 require the previous
+        // session to be completed.
+
         if (
           sessionNumber >
           1
@@ -3891,10 +3811,8 @@ app.put(
             return c.json(
               {
                 success: false,
-
                 error:
                   `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be enabled.`,
-
                 code:
                   "PREVIOUS_SESSION_NOT_COMPLETED",
               },
@@ -3927,9 +3845,9 @@ app.put(
         });
       }
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // FACILITATOR STARTS SESSION
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         requestedStatus ===
@@ -3951,50 +3869,6 @@ app.put(
           );
         }
 
-        // For Sessions 2–4, verify the previous
-        // session is completed before starting.
-        const sessionNumber =
-          Number(
-            session.sessionNumber
-          );
-
-        if (
-          sessionNumber >
-          1
-        ) {
-          const previousSession =
-            (
-              journey.sessions ||
-              []
-            ).find(
-              (item: any) =>
-                Number(
-                  item.number
-                ) ===
-                sessionNumber -
-                  1
-            );
-
-          if (
-            !previousSession ||
-            previousSession.status !==
-              "completed"
-          ) {
-            return c.json(
-              {
-                success: false,
-
-                error:
-                  `Session ${sessionNumber - 1} must be completed before Session ${sessionNumber} can be started.`,
-
-                code:
-                  "PREVIOUS_SESSION_NOT_COMPLETED",
-              },
-              400
-            );
-          }
-        }
-
         session.status =
           "in_progress";
 
@@ -4019,9 +3893,9 @@ app.put(
         });
       }
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // FACILITATOR COMPLETES SESSION
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         requestedStatus ===
@@ -4057,11 +3931,12 @@ app.put(
 
         // IMPORTANT:
         //
-        // Completing a session does NOT automatically
-        // unlock the next session.
+        // Completing a session does NOT
+        // automatically unlock the next session.
         //
-        // The facilitator must explicitly enable
-        // the next session.
+        // The facilitator must explicitly
+        // enable the next session.
+
         if (
           sessionNumber ===
           4
@@ -4275,9 +4150,9 @@ app.put(
         });
       }
 
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
       // FACILITATOR LOCK
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
 
       if (
         requestedStatus ===
@@ -4454,9 +4329,9 @@ app.post(
         );
       }
 
-      // ─────────────────────────────────────────
-      // STRICT PREVIOUS-SESSION REQUIREMENT
-      // ─────────────────────────────────────────
+      // ─────────────────────────────────────
+      // REQUIRE PREVIOUS SESSION
+      // ─────────────────────────────────────
 
       if (
         sessionNumber >
@@ -4491,6 +4366,10 @@ app.post(
           );
         }
       }
+
+      // ─────────────────────────────────────
+      // ENABLE TARGET
+      // ─────────────────────────────────────
 
       target.status =
         "available";
