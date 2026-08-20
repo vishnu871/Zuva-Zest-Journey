@@ -464,57 +464,191 @@ async function getAuthenticatedUser(
   c: any
 ): Promise<AuthenticatedUser | null> {
   try {
+    // ─────────────────────────────────────
+    // READ AUTHORIZATION HEADER
+    // ─────────────────────────────────────
+
     const authorization =
       c.req.header("Authorization") ?? "";
 
-    if (!authorization.startsWith("Bearer ")) {
-      console.warn("[auth] Missing Bearer token");
+    if (
+      !authorization.startsWith(
+        "Bearer "
+      )
+    ) {
+      console.warn(
+        "[auth] Missing Bearer token"
+      );
+
       return null;
     }
 
     const token =
-      authorization.slice(7).trim();
+      authorization
+        .slice(7)
+        .trim();
 
     if (!token) {
-      console.warn("[auth] Empty Bearer token");
+      console.warn(
+        "[auth] Empty Bearer token"
+      );
+
       return null;
     }
 
-    const supabase = getUserClient();
+    // ─────────────────────────────────────
+    // VERIFY SUPABASE JWT
+    // ─────────────────────────────────────
+
+    const supabase =
+      getUserClient();
 
     const {
-      data: { user },
+      data: {
+        user,
+      },
       error,
-    } = await supabase.auth.getUser(token);
+    } =
+      await supabase.auth.getUser(
+        token
+      );
 
-    if (error || !user) {
+    if (
+      error ||
+      !user
+    ) {
       console.warn(
         "[auth] Invalid/expired access token:",
         error?.message
       );
+
       return null;
     }
+
+    // ─────────────────────────────────────
+    // LOAD SERVER-SIDE USER RECORD
+    // ─────────────────────────────────────
 
     const userData =
-      await kv.get(`user:${user.id}`);
+      await kv.get(
+        `user:${user.id}`
+      );
 
-    const role =
-      userData?.role ||
+    // ─────────────────────────────────────
+    // RESOLVE ROLE
+    //
+    // IMPORTANT:
+    //
+    // Existing users may have an outdated
+    // role stored in KV.
+    //
+    // Supabase user metadata is used first
+    // when it contains a valid application role.
+    //
+    // KV remains the fallback for older users
+    // whose metadata does not contain a role.
+    // ─────────────────────────────────────
+
+    const metadataRole =
       user.user_metadata?.role;
 
+    const kvRole =
+      userData?.role;
+
+    let role: UserRole | undefined;
+
     if (
-      role !== "facilitator" &&
-      role !== "participant"
+      metadataRole ===
+        "facilitator" ||
+      metadataRole ===
+        "participant"
+    ) {
+      role =
+        metadataRole;
+    } else if (
+      kvRole ===
+        "facilitator" ||
+      kvRole ===
+        "participant"
+    ) {
+      role =
+        kvRole;
+    }
+
+    // ─────────────────────────────────────
+    // ROLE VALIDATION
+    // ─────────────────────────────────────
+
+    if (
+      role !==
+        "facilitator" &&
+      role !==
+        "participant"
     ) {
       console.warn(
-        `[auth] User ${user.id} has invalid role`
+        `[auth] User ${user.id} has no valid application role.`,
+        {
+          metadataRole,
+          kvRole,
+        }
       );
+
       return null;
     }
 
+    // ─────────────────────────────────────
+    // REPAIR STALE KV USER RECORD
+    //
+    // If Supabase metadata has the correct role
+    // but KV contains an old role, synchronize KV.
+    // ─────────────────────────────────────
+
+    if (
+      userData &&
+      userData.role !== role
+    ) {
+      await kv.set(
+        `user:${user.id}`,
+        {
+          ...userData,
+
+          id:
+            user.id,
+
+          email:
+            user.email ||
+            userData.email ||
+            "",
+
+          role,
+
+          fullName:
+            userData.fullName ||
+            user.user_metadata?.name ||
+            user.email ||
+            "",
+
+          updatedAt:
+            new Date().toISOString(),
+        }
+      );
+
+      console.log(
+        `[auth] Repaired stale role for ${user.id}: ${userData.role} → ${role}`
+      );
+    }
+
+    // ─────────────────────────────────────
+    // CREATE AUTHENTICATED USER
+    // ─────────────────────────────────────
+
     return {
-      id: user.id,
-      email: user.email,
+      id:
+        user.id,
+
+      email:
+        user.email,
+
       role,
     };
   } catch (error) {
