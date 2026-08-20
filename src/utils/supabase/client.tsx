@@ -8,6 +8,19 @@
 // };
 
 
+// import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+// import { projectId, publicAnonKey } from "./info";
+
+// const supabaseUrl = `https://${projectId}.supabase.co`;
+
+// export const supabase = createSupabaseClient(
+//   supabaseUrl,
+//   publicAnonKey
+// );
+
+// export const createClient = () => supabase;
+
+
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { projectId, publicAnonKey } from "./info";
 
@@ -15,7 +28,15 @@ const supabaseUrl = `https://${projectId}.supabase.co`;
 
 export const supabase = createSupabaseClient(
   supabaseUrl,
-  publicAnonKey
+  publicAnonKey,
+  {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      storageKey: "zest-journey-auth",
+    },
+  }
 );
 
 export const createClient = () => supabase;

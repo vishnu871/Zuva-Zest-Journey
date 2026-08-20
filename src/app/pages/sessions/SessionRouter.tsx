@@ -181,88 +181,81 @@ interface SessionData {
 }
 
 export default function SessionRouter() {
-  const { sessionId } =
-    useParams<{
-      sessionId: string;
-    }>();
+  const { sessionId } = useParams<{
+    sessionId: string;
+  }>();
 
-  const location =
-    useLocation();
-
-  const navigate =
-    useNavigate();
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const isParticipant =
-    location.pathname.startsWith(
-      "/participant"
-    );
+    location.pathname.startsWith("/participant");
 
   const isFacilitator =
-    location.pathname.startsWith(
-      "/facilitator"
-    );
+    location.pathname.startsWith("/facilitator");
 
-  const dashboardPath =
-    isParticipant
-      ? "/participant/dashboard"
-      : "/facilitator/dashboard";
+  const dashboardPath = isParticipant
+    ? "/participant/dashboard"
+    : "/facilitator/dashboard";
 
-  const [
-    sessionNumber,
-    setSessionNumber,
-  ] =
-    useState<number | null>(
-      null
-    );
+  const [sessionNumber, setSessionNumber] =
+    useState<number | null>(null);
 
-  const [
-    loading,
-    setLoading,
-  ] =
-    useState(true);
+  const [loading, setLoading] = useState(true);
 
-  const [
-    error,
-    setError,
-  ] =
-    useState<string | null>(
-      null
-    );
+  const [error, setError] =
+    useState<string | null>(null);
 
   useEffect(() => {
     if (!sessionId) {
-      setError(
-        "Session ID is missing."
-      );
-
+      setError("Session ID is missing.");
       setLoading(false);
-
       return;
     }
 
     let cancelled = false;
 
-    const loadSession =
-      async () => {
-        try {
-          setLoading(true);
-          setError(null);
+    const loadSession = async () => {
+      try {
+        setLoading(true);
+        setError(null);
 
-          const supabase =
-            createClient();
+        const supabase = createClient();
 
+        /*
+         * Get the current authenticated session.
+         *
+         * Supabase's autoRefreshToken/persistSession
+         * configuration is handled by client.tsx.
+         */
+        const {
+          data: { session: authSession },
+          error: authError,
+        } = await supabase.auth.getSession();
+
+        /*
+         * If the session is missing, attempt one explicit
+         * refresh before treating the user as logged out.
+         *
+         * This helps avoid intermittent "session expired"
+         * errors when the access token has just expired.
+         */
+        let activeSession = authSession;
+
+        if (
+          authError ||
+          !activeSession?.access_token
+        ) {
           const {
             data: {
-              session: authSession,
+              session: refreshedSession,
             },
-            error:
-              authError,
-          } =
-            await supabase.auth.getSession();
+            error: refreshError,
+          } = await supabase.auth.refreshSession();
 
           if (
-            authError ||
-            !authSession?.access_token
+            refreshError ||
+            !refreshedSession?.access_token
           ) {
             if (!cancelled) {
               setError(
@@ -273,225 +266,367 @@ export default function SessionRouter() {
             return;
           }
 
-          const accessToken =
-            authSession.access_token;
+          activeSession = refreshedSession;
+        }
 
-          const headers: HeadersInit =
-            {
-              "Content-Type":
-                "application/json",
+        const accessToken =
+          activeSession.access_token;
 
-              Authorization:
-                `Bearer ${accessToken}`,
-            };
+        const headers: HeadersInit = {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${accessToken}`,
+        };
 
-          // ─────────────────────────────────────
-          // GET SESSION
-          // ─────────────────────────────────────
+        /*
+         * Load the session.
+         */
+        const response = await fetch(
+          `${API}/sessions/${sessionId}`,
+          {
+            method: "GET",
+            headers,
+            cache: "no-store",
+          }
+        );
 
-          const response =
-            await fetch(
+        let data: any = null;
+
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          console.error(
+            "[SessionRouter] Failed to parse session response:",
+            jsonError
+          );
+        }
+
+        /*
+         * Authentication failure.
+         *
+         * Do not immediately destroy the user's navigation state.
+         * Give Supabase a chance to refresh the token first.
+         */
+        if (
+          response.status === 401 ||
+          response.status === 403
+        ) {
+          const {
+            data: {
+              session: refreshedSession,
+            },
+            error: refreshError,
+          } = await supabase.auth.refreshSession();
+
+          if (
+            !refreshError &&
+            refreshedSession?.access_token
+          ) {
+            const retryResponse = await fetch(
               `${API}/sessions/${sessionId}`,
               {
                 method: "GET",
-                headers,
+                headers: {
+                  "Content-Type":
+                    "application/json",
+                  Authorization:
+                    `Bearer ${refreshedSession.access_token}`,
+                },
+                cache: "no-store",
               }
             );
 
-          const data =
-            await response.json();
+            let retryData: any = null;
 
-          if (
-            !response.ok ||
-            !data.success
-          ) {
-            if (!cancelled) {
-              setError(
-                data.error ||
-                  "Session not found."
-              );
-            }
-
-            return;
-          }
-
-          const session =
-            data.session as SessionData;
-
-          const number =
-            Number(
-              session.sessionNumber
-            );
-
-          if (
-            !Number.isInteger(
-              number
-            ) ||
-            number < 1 ||
-            number > 4
-          ) {
-            if (!cancelled) {
-              setError(
-                `Unrecognised session (${session.sessionNumber}).`
-              );
-            }
-
-            return;
-          }
-
-          // ─────────────────────────────────────
-          // PARTICIPANT ACCESS CONTROL
-          // ─────────────────────────────────────
-          //
-          // A participant may NOT enter a locked
-          // session.
-          //
-          // The facilitator must first enable the
-          // session, changing it from locked to
-          // available.
-          //
-          // Once available, the participant can
-          // enter it.
-          //
-          // IMPORTANT:
-          // We deliberately DO NOT change the
-          // session status here for participants.
-          // ─────────────────────────────────────
-
-          if (
-            isParticipant &&
-            session.status ===
-              "locked"
-          ) {
-            if (!cancelled) {
-              setError(
-                "This session is locked. Your facilitator must enable it before you can begin."
-              );
-            }
-
-            return;
-          }
-
-          // ─────────────────────────────────────
-          // COMPLETED SESSION
-          // ─────────────────────────────────────
-          //
-          // Completed sessions are still available
-          // for review. Do not restart them.
-          // ─────────────────────────────────────
-
-          if (
-            isParticipant &&
-            session.status ===
-              "completed"
-          ) {
-            if (!cancelled) {
-              setSessionNumber(
-                number
-              );
-            }
-
-            return;
-          }
-
-          // ─────────────────────────────────────
-          // FACILITATOR STATUS
-          // ─────────────────────────────────────
-          //
-          // Only the facilitator can move an
-          // "available" session to "in_progress".
-          //
-          // This is the only client-side status
-          // transition performed by this router.
-          //
-          // The backend must also enforce this
-          // permission, so a participant cannot
-          // bypass it manually.
-          // ─────────────────────────────────────
-
-          if (
-            isFacilitator &&
-            session.status ===
-              "available"
-          ) {
             try {
-              const statusResponse =
-                await fetch(
-                  `${API}/sessions/${sessionId}/status`,
-                  {
-                    method:
-                      "PUT",
+              retryData =
+                await retryResponse.json();
+            } catch (retryJsonError) {
+              console.error(
+                "[SessionRouter] Failed to parse retry response:",
+                retryJsonError
+              );
+            }
 
-                    headers,
-
-                    body:
-                      JSON.stringify(
-                        {
-                          status:
-                            "in_progress",
-                        }
-                      ),
-                  }
+            if (
+              retryResponse.ok &&
+              retryData?.success
+            ) {
+              data = retryData;
+            } else {
+              if (!cancelled) {
+                setError(
+                  "Your session has expired. Please sign in again."
                 );
+              }
 
-              const statusData =
+              return;
+            }
+          } else {
+            if (!cancelled) {
+              setError(
+                "Your session has expired. Please sign in again."
+              );
+            }
+
+            return;
+          }
+        }
+
+        if (
+          !data?.success
+        ) {
+          if (!cancelled) {
+            setError(
+              data?.error ||
+                "Session not found."
+            );
+          }
+
+          return;
+        }
+
+        const session =
+          data.session as SessionData;
+
+        const number = Number(
+          session.sessionNumber
+        );
+
+        if (
+          !Number.isInteger(number) ||
+          number < 1 ||
+          number > 4
+        ) {
+          if (!cancelled) {
+            setError(
+              `Unrecognised session (${session.sessionNumber}).`
+            );
+          }
+
+          return;
+        }
+
+        /*
+         * ─────────────────────────────────────────
+         * PARTICIPANT ACCESS CONTROL
+         * ─────────────────────────────────────────
+         *
+         * Participants cannot enter locked sessions.
+         *
+         * IMPORTANT:
+         *
+         * Completing Session 1 does NOT unlock Session 2.
+         *
+         * The facilitator must explicitly unlock Session 2.
+         */
+        if (
+          isParticipant &&
+          session.status === "locked"
+        ) {
+          if (!cancelled) {
+            setError(
+              "This session is locked. Your facilitator must enable it before you can begin."
+            );
+          }
+
+          return;
+        }
+
+        /*
+         * ─────────────────────────────────────────
+         * COMPLETED SESSION
+         * ─────────────────────────────────────────
+         *
+         * Completed sessions can still be opened for
+         * review.
+         *
+         * We DO NOT change their status here.
+         */
+        if (
+          session.status === "completed"
+        ) {
+          if (!cancelled) {
+            setSessionNumber(number);
+          }
+
+          return;
+        }
+
+        /*
+         * ─────────────────────────────────────────
+         * FACILITATOR START
+         * ─────────────────────────────────────────
+         *
+         * A facilitator can start an AVAILABLE
+         * session.
+         *
+         * This changes:
+         *
+         * available → in_progress
+         *
+         * It does NOT:
+         *
+         * completed → available
+         *
+         * and it does NOT unlock the next session.
+         */
+        if (
+          isFacilitator &&
+          session.status === "available"
+        ) {
+          try {
+            const statusResponse =
+              await fetch(
+                `${API}/sessions/${sessionId}/status`,
+                {
+                  method: "PUT",
+                  headers,
+                  body: JSON.stringify({
+                    status: "in_progress",
+                  }),
+                }
+              );
+
+            let statusData: any = null;
+
+            try {
+              statusData =
                 await statusResponse.json();
+            } catch (statusJsonError) {
+              console.error(
+                "[SessionRouter] Failed to parse status response:",
+                statusJsonError
+              );
+            }
+
+            /*
+             * If the backend rejects the status update
+             * because of authentication, try once more
+             * with a refreshed token.
+             */
+            if (
+              statusResponse.status === 401 ||
+              statusResponse.status === 403
+            ) {
+              const {
+                data: {
+                  session: refreshedSession,
+                },
+                error: refreshError,
+              } =
+                await supabase.auth.refreshSession();
 
               if (
-                !statusResponse.ok ||
-                !statusData.success
+                refreshError ||
+                !refreshedSession?.access_token
               ) {
                 if (!cancelled) {
                   setError(
-                    statusData.error ||
+                    "Your session has expired. Please sign in again."
+                  );
+                }
+
+                return;
+              }
+
+              const retryStatusResponse =
+                await fetch(
+                  `${API}/sessions/${sessionId}/status`,
+                  {
+                    method: "PUT",
+                    headers: {
+                      "Content-Type":
+                        "application/json",
+                      Authorization:
+                        `Bearer ${refreshedSession.access_token}`,
+                    },
+                    body: JSON.stringify({
+                      status:
+                        "in_progress",
+                    }),
+                  }
+                );
+
+              let retryStatusData: any =
+                null;
+
+              try {
+                retryStatusData =
+                  await retryStatusResponse.json();
+              } catch (retryStatusJsonError) {
+                console.error(
+                  "[SessionRouter] Failed to parse retry status response:",
+                  retryStatusJsonError
+                );
+              }
+
+              if (
+                !retryStatusResponse.ok ||
+                !retryStatusData?.success
+              ) {
+                if (!cancelled) {
+                  setError(
+                    retryStatusData?.error ||
                       "You could not start this session."
                   );
                 }
 
                 return;
               }
-            } catch (
-              statusError
+            } else if (
+              !statusResponse.ok ||
+              !statusData?.success
             ) {
-              console.error(
-                "Failed to start facilitator session:",
-                statusError
-              );
-
               if (!cancelled) {
                 setError(
-                  "Unable to start this session. Please try again."
+                  statusData?.error ||
+                    "You could not start this session."
                 );
               }
 
               return;
             }
-          }
-
-          if (!cancelled) {
-            setSessionNumber(
-              number
+          } catch (statusError) {
+            console.error(
+              "[SessionRouter] Failed to start facilitator session:",
+              statusError
             );
-          }
-        } catch (
-          requestError
-        ) {
-          console.error(
-            "Failed to load session:",
-            requestError
-          );
 
-          if (!cancelled) {
-            setError(
-              "Failed to load session. Please refresh."
-            );
-          }
-        } finally {
-          if (!cancelled) {
-            setLoading(false);
+            if (!cancelled) {
+              setError(
+                "Unable to start this session. Please try again."
+              );
+            }
+
+            return;
           }
         }
-      };
+
+        /*
+         * ─────────────────────────────────────────
+         * ROUTE TO BOARD
+         * ─────────────────────────────────────────
+         */
+        if (!cancelled) {
+          setSessionNumber(number);
+        }
+      } catch (requestError) {
+        console.error(
+          "[SessionRouter] Failed to load session:",
+          requestError
+        );
+
+        if (!cancelled) {
+          setError(
+            "Failed to load session. Please refresh."
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
 
     loadSession();
 
@@ -504,9 +639,11 @@ export default function SessionRouter() {
     isFacilitator,
   ]);
 
-  // ─────────────────────────────────────────────
-  // LOADING
-  // ─────────────────────────────────────────────
+  /*
+   * ─────────────────────────────────────────────
+   * LOADING
+   * ─────────────────────────────────────────────
+   */
 
   if (loading) {
     return (
@@ -522,9 +659,11 @@ export default function SessionRouter() {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // ERROR / LOCKED SESSION
-  // ─────────────────────────────────────────────
+  /*
+   * ─────────────────────────────────────────────
+   * ERROR / LOCKED SESSION
+   * ─────────────────────────────────────────────
+   */
 
   if (error) {
     return (
@@ -546,9 +685,7 @@ export default function SessionRouter() {
 
           <button
             onClick={() =>
-              navigate(
-                dashboardPath
-              )
+              navigate(dashboardPath)
             }
             className="px-6 py-2 bg-[#4A1C5C] text-white rounded-xl text-sm font-medium hover:bg-[#3A1C4C] transition-colors"
           >
@@ -559,13 +696,13 @@ export default function SessionRouter() {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // SAFETY CHECK
-  // ─────────────────────────────────────────────
+  /*
+   * ─────────────────────────────────────────────
+   * SAFETY CHECK
+   * ─────────────────────────────────────────────
+   */
 
-  if (
-    sessionNumber === null
-  ) {
+  if (sessionNumber === null) {
     return (
       <div className="min-h-screen bg-[#EBE2D6] flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center shadow-sm border border-border space-y-4">
@@ -577,9 +714,7 @@ export default function SessionRouter() {
 
           <button
             onClick={() =>
-              navigate(
-                dashboardPath
-              )
+              navigate(dashboardPath)
             }
             className="px-6 py-2 bg-[#4A1C5C] text-white rounded-xl text-sm font-medium hover:bg-[#3A1C4C] transition-colors"
           >
@@ -590,32 +725,24 @@ export default function SessionRouter() {
     );
   }
 
-  // ─────────────────────────────────────────────
-  // ROUTE TO SESSION BOARD
-  // ─────────────────────────────────────────────
+  /*
+   * ─────────────────────────────────────────────
+   * ROUTE TO SESSION BOARD
+   * ─────────────────────────────────────────────
+   */
 
-  switch (
-    sessionNumber
-  ) {
+  switch (sessionNumber) {
     case 1:
-      return (
-        <Session1Board />
-      );
+      return <Session1Board />;
 
     case 2:
-      return (
-        <Session2Board />
-      );
+      return <Session2Board />;
 
     case 3:
-      return (
-        <Session3Board />
-      );
+      return <Session3Board />;
 
     case 4:
-      return (
-        <Session4Board />
-      );
+      return <Session4Board />;
 
     default:
       return (
@@ -630,9 +757,7 @@ export default function SessionRouter() {
 
             <button
               onClick={() =>
-                navigate(
-                  dashboardPath
-                )
+                navigate(dashboardPath)
               }
               className="px-6 py-2 bg-[#4A1C5C] text-white rounded-xl text-sm font-medium hover:bg-[#3A1C4C] transition-colors"
             >
