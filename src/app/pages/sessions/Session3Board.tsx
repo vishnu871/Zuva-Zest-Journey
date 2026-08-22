@@ -796,7 +796,7 @@ export default function Session3Board() {
       setShowCompletionModal(false);
       toast.success("Session 3 complete. Session 4 is now unlocked.");
       navigate(dashboardPath);
-    } catch { toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
+    } catch (error) { console.error("Session 3 completion failed:", error); toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
   };
 
   // S2 carry-forward

@@ -4252,9 +4252,9 @@ export default function Session1Board() {
           );
 
         if (!boardResponse.ok) {
-          throw new Error(
-            "Failed to save board.",
-          );
+          const boardData = await boardResponse.json().catch(() => null);
+          console.error("Board save response:", boardData);
+          throw new Error(boardData?.error || "Failed to save board.");
         }
 
         dirtyRef.current = false;
@@ -4275,8 +4275,12 @@ export default function Session1Board() {
         const statusData = await statusResponse.json();
 
         if (!statusResponse.ok || !statusData?.success) {
+          console.error("Session completion response:", {
+            status: statusResponse.status,
+            data: statusData,
+          });
           throw new Error(
-            "Failed to complete session.",
+            statusData?.error || "Failed to complete session.",
           );
         }
 
@@ -4292,9 +4296,7 @@ export default function Session1Board() {
           error,
         );
 
-        toast.error(
-          "Failed to end session. Please try again.",
-        );
+        toast.error("We couldn't complete this session. Please try again.");
       } finally {
         setSaving(false);
         setEndingSession(false);

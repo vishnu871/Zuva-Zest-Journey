@@ -1048,7 +1048,7 @@ export default function Session4Board() {
       setShowCompletionModal(false);
       setShowCompletion(true);
       toast.success("Zest Journey completed! 🎉");
-    } catch { toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
+    } catch (error) { console.error("Session 4 completion failed:", error); toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
   };
 
   const completeAndLeave = async () => {

@@ -775,7 +775,7 @@ export default function Session2Board() {
       setShowCompletionModal(false);
       toast.success("Session 2 complete. Session 3 is now unlocked.");
       navigate(dashboardPath);
-    } catch { toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
+    } catch (error) { console.error("Session 2 completion failed:", error); toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
   };
 
   // Derive identities A & B from step2

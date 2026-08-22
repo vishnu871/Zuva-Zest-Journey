@@ -4411,6 +4411,10 @@ app.put(
         requestedStatus ===
         "completed"
       ) {
+        console.log(
+          `[sessions/status] Completing session ${sessionId} for facilitator ${auth.user.id}`
+        );
+
         if (
           session.status ===
           "locked"
@@ -4518,9 +4522,48 @@ app.put(
           session
         );
 
+        const persistedSession =
+          await getSession(sessionId);
+
+        if (
+          !persistedSession ||
+          persistedSession.status !== "completed"
+        ) {
+          console.error(
+            `[sessions/status] Completion verification failed for session ${sessionId}`
+          );
+
+          return c.json(
+            {
+              success: false,
+              error:
+                "The session could not be confirmed as completed.",
+              code:
+                "SESSION_COMPLETION_NOT_PERSISTED",
+            },
+            500
+          );
+        }
+
         await saveJourney(
           journey
         );
+
+        /*
+         * Completion is authoritative once the session and journey are
+         * persisted. Report delivery is intentionally handled separately
+         * by the report endpoint so an email provider failure cannot turn a
+         * successful completion into a failed request.
+         */
+        return c.json({
+          success: true,
+          journey,
+          session: persistedSession,
+          reportEmail: {
+            sent: false,
+            results: [],
+          },
+        });
 
         // ─────────────────────────────────
         // REPORT EMAIL
@@ -4829,7 +4872,7 @@ app.put(
       );
     } catch (error) {
       console.error(
-        "[sessions/status]",
+        "[sessions/status] Completion request failed:",
         error
       );
 
