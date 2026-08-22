@@ -4518,36 +4518,69 @@ app.put(
             "completed";
         }
 
-        await saveSession(
-          session
-        );
+        let completionStage = "session";
 
-        const persistedSession =
-          await getSession(sessionId);
+        try {
+          await saveSession(session);
 
-        if (
-          !persistedSession ||
-          persistedSession.status !== "completed"
-        ) {
+          completionStage = "journey";
+          await saveJourney(journey);
+        } catch (persistenceError) {
           console.error(
-            `[sessions/status] Completion verification failed for session ${sessionId}`
+            "[sessions/status] Completion persistence failed",
+            {
+              sessionId,
+              facilitatorId: auth.user.id,
+              journeyId: session.journeyId,
+              stage: completionStage,
+              error: persistenceError,
+            }
           );
 
           return c.json(
             {
               success: false,
-              error:
-                "The session could not be confirmed as completed.",
-              code:
-                "SESSION_COMPLETION_NOT_PERSISTED",
+              error: "The session could not be saved as completed.",
+              code: "SESSION_COMPLETION_PERSISTENCE_FAILED",
             },
             500
           );
         }
 
-        await saveJourney(
-          journey
-        );
+        const [persistedSession, persistedJourney] =
+          await Promise.all([
+            getSession(sessionId),
+            getJourney(session.journeyId),
+          ]);
+
+        if (
+          !persistedSession ||
+          persistedSession.status !== "completed" ||
+          !persistedJourney ||
+          getSessionFromJourney(persistedJourney, sessionId)?.status !==
+            "completed"
+        ) {
+          console.error(
+            "[sessions/status] Completion verification failed",
+            {
+              sessionId,
+              facilitatorId: auth.user.id,
+              journeyId: session.journeyId,
+              persistedSessionStatus: persistedSession?.status,
+              persistedJourneySessionStatus:
+                getSessionFromJourney(persistedJourney, sessionId)?.status,
+            }
+          );
+
+          return c.json(
+            {
+              success: false,
+              error: "The session could not be confirmed as completed.",
+              code: "SESSION_COMPLETION_NOT_PERSISTED",
+            },
+            500
+          );
+        }
 
         /*
          * Completion is authoritative once the session and journey are
