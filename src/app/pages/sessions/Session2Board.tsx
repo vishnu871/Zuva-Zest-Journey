@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
 import { getAuthHeaders } from "../../../utils/supabase/api";
 import { projectId } from "../../../utils/supabase/info";
+import SessionCompletionModal from "../../components/SessionCompletionModal";
 import {
   ChevronLeft, ChevronRight, ArrowLeft, Wifi, WifiOff, Save,
   CheckCircle, Plus, X, Pencil, GripVertical, Loader2, Trash2,
@@ -672,6 +673,7 @@ export default function Session2Board() {
   const [sessionInfo, setSessionInfo] = useState<any>(null);
   const [session1Board, setSession1Board] = useState<any>(null);
   const [endingSession, setEndingSession] = useState(false);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
 
   const channelRef = useRef<any>(null);
   const saveTimerRef = useRef<any>(null);
@@ -762,14 +764,18 @@ export default function Session2Board() {
   };
 
   const endSession = async () => {
-    if (!window.confirm("End Session 2? All data will be saved and Session 3 will be unlocked.")) return;
     setEndingSession(true);
     try {
-      await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: stateRef.current }) });
-      await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
+      const boardResponse = await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: stateRef.current }) });
+      const boardData = await boardResponse.json();
+      if (!boardResponse.ok || !boardData?.success) throw new Error("Board save failed.");
+      const statusResponse = await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
+      const statusData = await statusResponse.json();
+      if (!statusResponse.ok || !statusData?.success) throw new Error("Session completion failed.");
+      setShowCompletionModal(false);
       toast.success("Session 2 complete. Session 3 is now unlocked.");
       navigate(dashboardPath);
-    } catch { toast.error("Failed to end session."); } finally { setEndingSession(false); }
+    } catch { toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
   };
 
   // Derive identities A & B from step2
@@ -842,6 +848,7 @@ export default function Session2Board() {
 
   return (
     <div className="min-h-screen bg-[#EBE2D6] flex flex-col overflow-x-hidden">
+      <SessionCompletionModal open={showCompletionModal} sessionLabel="Session 2" confirming={endingSession} onCancel={() => setShowCompletionModal(false)} onConfirm={endSession} />
       {/* Top bar */}
       <div className="bg-white border-b border-border px-3 sm:px-4 py-2.5 flex items-center gap-2 sm:gap-3 shadow-sm flex-shrink-0">
         <button onClick={() => navigate(dashboardPath)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
@@ -873,7 +880,7 @@ export default function Session2Board() {
           {saving ? <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" />Saving</div>
             : lastSaved ? <div className="hidden sm:flex items-center gap-1 text-xs text-muted-foreground"><Save className="w-3 h-3" />Saved</div> : null}
           {!isParticipant && (
-            <button onClick={endSession} disabled={endingSession} className="flex items-center gap-1 px-2 sm:px-3 py-1.5 bg-[#AA5D53] text-white text-xs rounded-lg hover:bg-[#934D45] transition-colors">
+            <button onClick={() => setShowCompletionModal(true)} disabled={endingSession} className="flex items-center gap-1 px-2 sm:px-3 py-1.5 bg-[#AA5D53] text-white text-xs rounded-lg hover:bg-[#934D45] transition-colors">
               {endingSession && <Loader2 className="w-3 h-3 animate-spin" />}
               <span className="hidden sm:inline">End Session</span><span className="sm:hidden">End</span>
             </button>
@@ -936,7 +943,7 @@ export default function Session2Board() {
               <span className="hidden sm:inline">Next</span><ChevronRight className="w-4 h-4" />
             </button>
           ) : !isParticipant ? (
-            <button onClick={endSession} disabled={endingSession}
+            <button onClick={() => setShowCompletionModal(true)} disabled={endingSession}
               className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-all flex-shrink-0">
               {endingSession ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle className="w-4 h-4" />}
               <span className="hidden sm:inline">Complete Session 2</span><span className="sm:hidden">Complete</span>

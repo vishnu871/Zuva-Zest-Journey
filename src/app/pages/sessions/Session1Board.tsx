@@ -1288,6 +1288,7 @@ import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
 import { getAuthHeaders } from "../../../utils/supabase/api";
 import { projectId } from "../../../utils/supabase/info";
+import SessionCompletionModal from "../../components/SessionCompletionModal";
 import {
   ChevronLeft,
   ChevronRight,
@@ -3820,6 +3821,9 @@ export default function Session1Board() {
   const [endingSession, setEndingSession] =
     useState(false);
 
+  const [showCompletionModal, setShowCompletionModal] =
+    useState(false);
+
   const channelRef = useRef<any>(null);
   const saveTimerRef =
     useRef<ReturnType<typeof setTimeout> | null>(
@@ -4220,15 +4224,6 @@ export default function Session1Board() {
         return;
       }
 
-      const confirmed =
-        window.confirm(
-          "End this session? The board will be saved and marked as complete.",
-        );
-
-      if (!confirmed) {
-        return;
-      }
-
       setEndingSession(true);
 
       try {
@@ -4277,7 +4272,9 @@ export default function Session1Board() {
             },
           );
 
-        if (!statusResponse.ok) {
+        const statusData = await statusResponse.json();
+
+        if (!statusResponse.ok || !statusData?.success) {
           throw new Error(
             "Failed to complete session.",
           );
@@ -4287,7 +4284,8 @@ export default function Session1Board() {
           "Session ended and saved.",
         );
 
-        navigate(dashboardPath);
+          setShowCompletionModal(false);
+          navigate(dashboardPath);
       } catch (error) {
         console.error(
           "End session error:",
@@ -4309,6 +4307,10 @@ export default function Session1Board() {
       sessionId,
     ],
   );
+
+  const requestEndSession = useCallback(() => {
+    setShowCompletionModal(true);
+  }, []);
 
   // ─── Derived state ────────────────────────────────────────────────────────
 
@@ -4344,6 +4346,13 @@ export default function Session1Board() {
 
   return (
     <div className="min-h-screen bg-[#EBE2D6] flex flex-col overflow-x-hidden">
+      <SessionCompletionModal
+        open={showCompletionModal}
+        sessionLabel="this session"
+        confirming={endingSession}
+        onCancel={() => setShowCompletionModal(false)}
+        onConfirm={endSession}
+      />
       {/* Top bar */}
       <div className="bg-white border-b border-border px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 sm:gap-3 shadow-sm flex-shrink-0">
         <button
@@ -4433,7 +4442,7 @@ export default function Session1Board() {
           {!isParticipant && (
             <button
               type="button"
-              onClick={endSession}
+              onClick={requestEndSession}
               disabled={endingSession}
               className="flex items-center gap-1 px-2 sm:px-3 py-1.5 bg-[#AA5D53] text-white text-xs rounded-lg hover:bg-[#934D45] transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
@@ -4770,7 +4779,7 @@ export default function Session1Board() {
           ) : !isParticipant ? (
             <button
               type="button"
-              onClick={endSession}
+              onClick={requestEndSession}
               disabled={endingSession}
               className="flex items-center gap-1.5 px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium bg-[#3D6D6C] text-white hover:bg-[#2C5958] transition-all flex-shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
             >

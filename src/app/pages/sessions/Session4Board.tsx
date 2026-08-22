@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
 import { getAuthHeaders } from "../../../utils/supabase/api";
 import { projectId } from "../../../utils/supabase/info";
+import SessionCompletionModal from "../../components/SessionCompletionModal";
 import {
   ChevronLeft, ChevronRight, ArrowLeft, Wifi, WifiOff, Save,
   X, Loader2, Trophy, Star, ArrowRight, Plus, Edit2, Printer,
@@ -943,6 +944,7 @@ export default function Session4Board() {
   const [prevBoards, setPrevBoards] = useState<Record<number, any>>({});
   const [endingSession, setEndingSession] = useState(false);
   const [showCompletion, setShowCompletion] = useState(false);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
 
   const channelRef = useRef<any>(null);
   const saveTimerRef = useRef<any>(null);
@@ -1028,21 +1030,25 @@ export default function Session4Board() {
 
   const saveAndComplete = async () => {
     const finalState = { ...stateRef.current, journeyCompleted: true };
-    await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: finalState }) });
-    await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
+    const boardResponse = await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: finalState }) });
+    const boardData = await boardResponse.json();
+    if (!boardResponse.ok || !boardData?.success) throw new Error("Board save failed.");
+    const statusResponse = await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
+    const statusData = await statusResponse.json();
+    if (!statusResponse.ok || !statusData?.success) throw new Error("Session completion failed.");
     setBoardState(finalState);
     channelRef.current?.send({ type: "broadcast", event: "board_update", payload: { state: finalState } });
     return finalState;
   };
 
   const endSession = async () => {
-    if (!window.confirm("Complete Session 4 and end the Zest Journey? Everything will be saved.")) return;
     setEndingSession(true);
     try {
       await saveAndComplete();
+      setShowCompletionModal(false);
       setShowCompletion(true);
       toast.success("Zest Journey completed! 🎉");
-    } catch { toast.error("Failed to complete journey."); } finally { setEndingSession(false); }
+    } catch { toast.error("We couldn't complete this session. Please try again."); } finally { setEndingSession(false); }
   };
 
   const completeAndLeave = async () => {
@@ -1137,6 +1143,7 @@ export default function Session4Board() {
 
   return (
     <div className="min-h-screen bg-[#EBE2D6] flex flex-col overflow-x-hidden">
+      <SessionCompletionModal open={showCompletionModal} sessionLabel="Session 4" confirming={endingSession} onCancel={() => setShowCompletionModal(false)} onConfirm={endSession} />
       {/* Top bar */}
       <div className="bg-white border-b border-border px-3 sm:px-4 py-2.5 flex items-center gap-2 sm:gap-3 shadow-sm flex-shrink-0">
         <button onClick={() => navigate(dashboardPath)} className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors flex-shrink-0">
@@ -1170,7 +1177,7 @@ export default function Session4Board() {
             : null}
           {!isParticipant && !showCompletion && (
             <button
-              onClick={endSession}
+              onClick={() => setShowCompletionModal(true)}
               disabled={endingSession}
               className="flex items-center gap-1 px-2 sm:px-3 py-1.5 text-white text-xs rounded-lg hover:opacity-90 transition-colors"
               style={{ backgroundColor: SESSION_COLOR }}

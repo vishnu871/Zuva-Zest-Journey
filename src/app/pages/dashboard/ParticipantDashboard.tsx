@@ -1342,6 +1342,22 @@ export default function ParticipantDashboard() {
                       </div>
                     </div>
 
+                    {completedCount > 0 && (
+                      <div className="mb-4 flex items-start gap-3 rounded-2xl border border-[#D4A843]/35 bg-[#F7F3EE] p-4 shadow-sm">
+                        <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-[#4A1C5C] text-[#D4A843]">
+                          <CheckCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-[#4A1C5C]" style={{ fontFamily: "Playfair Display, serif" }}>
+                            Session {sessions.find((session) => session.status === "completed")?.number} Complete
+                          </p>
+                          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                            Your reflections and work have been saved. You can review this session or continue when the next one becomes available.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {/* ─────────────────────────────────────────────────────── */}
                     {/* CONTINUE PROMPT */}
                     {/* ─────────────────────────────────────────────────────── */}
