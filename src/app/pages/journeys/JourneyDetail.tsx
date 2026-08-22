@@ -855,11 +855,43 @@ function ActionButton({
   sessionNumber: number;
 }) {
   const navigate = useNavigate();
+  const [starting, setStarting] = useState(false);
 
-  const go = () => {
+  const go = async () => {
     if (!sessionId) {
       toast.error("Session ID is missing.");
       return;
+    }
+
+    if (status === "available") {
+      setStarting(true);
+
+      try {
+        const headers = await getAuthenticatedHeaders();
+        const response = await fetch(
+          `${API}/sessions/${sessionId}/status`,
+          {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({ status: "in_progress" }),
+          }
+        );
+        const data = await response.json();
+
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.error || "Failed to start session.");
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to start session."
+        );
+        setStarting(false);
+        return;
+      }
+
+      setStarting(false);
     }
 
     navigate(
@@ -906,10 +938,11 @@ function ActionButton({
   return (
     <button
       onClick={go}
+        disabled={starting}
       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
     >
       <Play className="w-3.5 h-3.5" />
-      Start Session {sessionNumber}
+      {starting ? "Starting..." : `Start Session ${sessionNumber}`}
     </button>
   );
 }

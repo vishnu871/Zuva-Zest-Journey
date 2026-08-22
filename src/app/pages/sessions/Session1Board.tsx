@@ -1286,7 +1286,8 @@ import { useNavigate, useLocation, useParams } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getAuthHeaders } from "../../../utils/supabase/api";
+import { projectId } from "../../../utils/supabase/info";
 import {
   ChevronLeft,
   ChevronRight,
@@ -1346,11 +1347,6 @@ interface BoardState {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
-
-const HEADERS = {
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${publicAnonKey}`,
-};
 
 const NOTE_COLORS = [
   "#FFF176",
@@ -3854,18 +3850,19 @@ export default function Session1Board() {
       setLoading(true);
 
       try {
+        const headers = await getAuthHeaders();
         const [sessionResponse, boardResponse] =
           await Promise.all([
             fetch(
               `${API}/sessions/${sessionId}`,
               {
-                headers: HEADERS,
+                headers,
               },
             ),
             fetch(
               `${API}/sessions/${sessionId}/board`,
               {
-                headers: HEADERS,
+                headers,
               },
             ),
           ]);
@@ -4130,7 +4127,7 @@ export default function Session1Board() {
             `${API}/sessions/${sessionId}/board`,
             {
               method: "PUT",
-              headers: HEADERS,
+              headers: await getAuthHeaders(),
               body: JSON.stringify({
                 state: nextState,
               }),
@@ -4260,7 +4257,7 @@ export default function Session1Board() {
             `${API}/sessions/${sessionId}/board`,
             {
               method: "PUT",
-              headers: HEADERS,
+              headers: await getAuthHeaders(),
               body: JSON.stringify({
                 state: finalState,
               }),
@@ -4281,7 +4278,7 @@ export default function Session1Board() {
             `${API}/sessions/${sessionId}/status`,
             {
               method: "PUT",
-              headers: HEADERS,
+              headers: await getAuthHeaders(),
               body: JSON.stringify({
                 status: "completed",
               }),

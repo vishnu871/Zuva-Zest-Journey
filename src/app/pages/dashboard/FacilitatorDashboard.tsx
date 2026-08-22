@@ -995,32 +995,20 @@ export default function FacilitatorDashboard() {
         headers,
       } = await getAuthHeaders();
 
-      /*
-       * If the session is locked because of old
-       * 7-day logic, make it available for testing.
-       *
-       * This is only changing the session status;
-       * the board data itself is untouched.
-       */
-      if (
-        session.status === "locked"
-      ) {
-        try {
-          await fetch(
-            `${API}/sessions/${session.id}/status`,
-            {
-              method: "PUT",
-              headers,
-              body: JSON.stringify({
-                status: "available",
-              }),
-            }
-          );
-        } catch (statusError) {
-          console.warn(
-            "[facilitator-dashboard] Could not update locked session status:",
-            statusError
-          );
+      if (session.status === "available") {
+        const response = await fetch(
+          `${API}/sessions/${session.id}/status`,
+          {
+            method: "PUT",
+            headers,
+            body: JSON.stringify({ status: "in_progress" }),
+          }
+        );
+
+        const data = await response.json();
+
+        if (!response.ok || !data?.success) {
+          throw new Error(data?.error || "Unable to start session.");
         }
       }
     } catch (error) {

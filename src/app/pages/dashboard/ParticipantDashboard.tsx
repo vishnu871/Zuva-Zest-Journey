@@ -458,7 +458,9 @@ function normalizeSession(
     allowedStatuses.includes(
       raw.status
     )
-      ? raw.status
+      ? raw.status === "available"
+        ? "locked"
+        : raw.status
       : "locked";
 
   return {

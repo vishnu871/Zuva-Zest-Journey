@@ -1611,8 +1611,6 @@ function canOpenSession(
 
   return (
     session.status ===
-      "available" ||
-    session.status ===
       "in_progress" ||
     session.status ===
       "completed"
@@ -2428,7 +2426,7 @@ app.post(
             availableAt:
               number ===
               startingSessionNumber
-                ? now
+                ? null
                 : null,
           })
         );

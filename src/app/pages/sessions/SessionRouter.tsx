@@ -306,10 +306,7 @@ export default function SessionRouter() {
          * Do not immediately destroy the user's navigation state.
          * Give Supabase a chance to refresh the token first.
          */
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
+        if (response.status === 401) {
           const {
             data: {
               session: refreshedSession,
@@ -421,7 +418,8 @@ export default function SessionRouter() {
          */
         if (
           isParticipant &&
-          session.status === "locked"
+          (session.status === "locked" ||
+            session.status === "available")
         ) {
           if (!cancelled) {
             setError(

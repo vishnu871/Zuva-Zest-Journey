@@ -3,7 +3,8 @@ import { useNavigate, useLocation, useParams } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getAuthHeaders } from "../../../utils/supabase/api";
+import { projectId } from "../../../utils/supabase/info";
 import {
   ChevronLeft, ChevronRight, ArrowLeft, Wifi, WifiOff, Save,
   X, Loader2, Trophy, Star, ArrowRight, Plus, Edit2, Printer,
@@ -45,7 +46,7 @@ interface Session4State {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
-const HEADERS = { "Content-Type": "application/json", "Authorization": `Bearer ${publicAnonKey}` };
+const HEADERS = getAuthHeaders;
 const SESSION_COLOR = "#AA5D53";
 
 const IDENTITY_CARDS = [
@@ -953,8 +954,8 @@ export default function Session4Board() {
     (async () => {
       try {
         const [sr, br] = await Promise.all([
-          fetch(`${API}/sessions/${sessionId}`, { headers: HEADERS }),
-          fetch(`${API}/sessions/${sessionId}/board`, { headers: HEADERS }),
+          fetch(`${API}/sessions/${sessionId}`, { headers: await HEADERS() }),
+          fetch(`${API}/sessions/${sessionId}/board`, { headers: await HEADERS() }),
         ]);
         if (sr.ok) {
           const d = await sr.json();
@@ -1012,7 +1013,7 @@ export default function Session4Board() {
       saveTimerRef.current = setTimeout(async () => {
         setSaving(true);
         try {
-          await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ state: next }) });
+          await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: next }) });
           setLastSaved(new Date());
         } catch { /* retry */ } finally { setSaving(false); }
       }, 1200);
@@ -1027,8 +1028,8 @@ export default function Session4Board() {
 
   const saveAndComplete = async () => {
     const finalState = { ...stateRef.current, journeyCompleted: true };
-    await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ state: finalState }) });
-    await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ status: "completed" }) });
+    await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: finalState }) });
+    await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
     setBoardState(finalState);
     channelRef.current?.send({ type: "broadcast", event: "board_update", payload: { state: finalState } });
     return finalState;

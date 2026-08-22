@@ -3,7 +3,8 @@ import { useNavigate, useLocation, useParams } from "react-router";
 import { motion, AnimatePresence } from "motion/react";
 import { toast } from "sonner";
 import { createClient } from "../../../utils/supabase/client";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getAuthHeaders } from "../../../utils/supabase/api";
+import { projectId } from "../../../utils/supabase/info";
 import {
   ChevronLeft, ChevronRight, ArrowLeft, Wifi, WifiOff, Save,
   CheckCircle, Plus, X, Pencil, GripVertical, Loader2, Trash2,
@@ -36,7 +37,7 @@ interface Session2State {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
-const HEADERS = { "Content-Type": "application/json", "Authorization": `Bearer ${publicAnonKey}` };
+const HEADERS = getAuthHeaders;
 
 const NOTE_COLORS = ["#FFF9C4", "#C8E6C9", "#E1BEE7", "#FFE0B2", "#B3E5FC", "#F8BBD9", "#DCEDC8"];
 
@@ -682,8 +683,8 @@ export default function Session2Board() {
     (async () => {
       try {
         const [sessRes, boardRes] = await Promise.all([
-          fetch(`${API}/sessions/${sessionId}`, { headers: HEADERS }),
-          fetch(`${API}/sessions/${sessionId}/board`, { headers: HEADERS }),
+          fetch(`${API}/sessions/${sessionId}`, { headers: await HEADERS() }),
+          fetch(`${API}/sessions/${sessionId}/board`, { headers: await HEADERS() }),
         ]);
 
         if (sessRes.ok) {
@@ -747,7 +748,7 @@ export default function Session2Board() {
       saveTimerRef.current = setTimeout(async () => {
         setSaving(true);
         try {
-          await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ state: next }) });
+          await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: next }) });
           setLastSaved(new Date());
         } catch { /* retry */ } finally { setSaving(false); }
       }, 1200);
@@ -764,8 +765,8 @@ export default function Session2Board() {
     if (!window.confirm("End Session 2? All data will be saved and Session 3 will be unlocked.")) return;
     setEndingSession(true);
     try {
-      await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ state: stateRef.current }) });
-      await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: HEADERS, body: JSON.stringify({ status: "completed" }) });
+      await fetch(`${API}/sessions/${sessionId}/board`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ state: stateRef.current }) });
+      await fetch(`${API}/sessions/${sessionId}/status`, { method: "PUT", headers: await HEADERS(), body: JSON.stringify({ status: "completed" }) });
       toast.success("Session 2 complete. Session 3 is now unlocked.");
       navigate(dashboardPath);
     } catch { toast.error("Failed to end session."); } finally { setEndingSession(false); }
