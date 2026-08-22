@@ -3608,14 +3608,13 @@ app.get(
         );
 
       const facilitatorAccess =
-        auth.user.role ===
-          "facilitator" &&
         journey.facilitatorId ===
           auth.user.id;
 
       const participantAccess =
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         isParticipantLinked(
           journey,
           auth.user.email || ""
@@ -3637,6 +3636,7 @@ app.get(
       if (
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         !canOpenSession(
           session,
           "participant"
@@ -3665,7 +3665,8 @@ app.get(
       if (
         session.sessionNumber > 1 &&
         auth.user.role ===
-          "participant"
+          "participant" &&
+        !facilitatorAccess
       ) {
         for (
           const sessionItem of
@@ -3772,14 +3773,13 @@ app.get(
       }
 
       const facilitatorAccess =
-        auth.user.role ===
-          "facilitator" &&
         journey.facilitatorId ===
           auth.user.id;
 
       const participantAccess =
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         isParticipantLinked(
           journey,
           auth.user.email || ""
@@ -3801,6 +3801,7 @@ app.get(
       if (
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         !canOpenSession(
           session,
           "participant"
@@ -3818,6 +3819,7 @@ app.get(
       }
 
       const participantId =
+        !facilitatorAccess &&
         auth.user.role === "participant"
           ? auth.user.id
           : await getLinkedParticipantId(journey);
@@ -3909,14 +3911,13 @@ app.put(
       }
 
       const facilitatorAccess =
-        auth.user.role ===
-          "facilitator" &&
         journey.facilitatorId ===
           auth.user.id;
 
       const participantAccess =
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         isParticipantLinked(
           journey,
           auth.user.email || ""
@@ -3938,6 +3939,7 @@ app.put(
       if (
         auth.user.role ===
           "participant" &&
+        !facilitatorAccess &&
         !canOpenSession(
           session,
           "participant"
@@ -3968,6 +3970,7 @@ app.put(
       }
 
       const participantId =
+        !facilitatorAccess &&
         auth.user.role === "participant"
           ? auth.user.id
           : await getLinkedParticipantId(journey);
@@ -4073,6 +4076,9 @@ app.put(
         );
       }
 
+      const facilitatorAccess =
+        journey.facilitatorId === auth.user.id;
+
       const currentStatus:
         SessionStatus =
         session.status;
@@ -4083,7 +4089,8 @@ app.put(
 
       if (
         auth.user.role ===
-        "participant"
+          "participant" &&
+        !facilitatorAccess
       ) {
         if (
           !isParticipantLinked(
@@ -4190,10 +4197,7 @@ app.put(
       // FACILITATOR
       // ─────────────────────────────────────
 
-      if (
-        auth.user.role !==
-        "facilitator"
-      ) {
+      if (!facilitatorAccess) {
         return c.json(
           {
             error:
