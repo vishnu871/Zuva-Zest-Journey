@@ -1119,6 +1119,22 @@ function getSessionFromJourney(
   );
 }
 
+function isFacilitatorForJourney(
+  journey: any,
+  user: AuthenticatedUser
+) {
+  const ownsById =
+    typeof journey?.facilitatorId === "string" &&
+    journey.facilitatorId === user.id;
+
+  const ownsByEmail =
+    Boolean(user.email) &&
+    normalizeEmail(journey?.facilitatorEmail) ===
+      normalizeEmail(user.email);
+
+  return ownsById || ownsByEmail;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PARTICIPANT BOARD STORAGE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3608,8 +3624,7 @@ app.get(
         );
 
       const facilitatorAccess =
-        journey.facilitatorId ===
-          auth.user.id;
+        isFacilitatorForJourney(journey, auth.user);
 
       const participantAccess =
         auth.user.role ===
@@ -3773,8 +3788,7 @@ app.get(
       }
 
       const facilitatorAccess =
-        journey.facilitatorId ===
-          auth.user.id;
+        isFacilitatorForJourney(journey, auth.user);
 
       const participantAccess =
         auth.user.role ===
@@ -3911,8 +3925,7 @@ app.put(
       }
 
       const facilitatorAccess =
-        journey.facilitatorId ===
-          auth.user.id;
+        isFacilitatorForJourney(journey, auth.user);
 
       const participantAccess =
         auth.user.role ===
@@ -4077,7 +4090,7 @@ app.put(
       }
 
       const facilitatorAccess =
-        journey.facilitatorId === auth.user.id;
+        isFacilitatorForJourney(journey, auth.user);
 
       const currentStatus:
         SessionStatus =
