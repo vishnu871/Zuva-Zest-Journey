@@ -1085,6 +1085,28 @@ async function saveSession(
   );
 }
 
+async function saveWithRetry(
+  label: string,
+  operation: () => Promise<void>
+) {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await operation();
+      return;
+    } catch (error) {
+      lastError = error;
+      console.error(
+        `[persistence] ${label} failed (attempt ${attempt}/2)`,
+        error
+      );
+    }
+  }
+
+  throw lastError;
+}
+
 function getSessionFromJourney(
   journey: any,
   sessionId: string
@@ -4505,8 +4527,9 @@ app.put(
               nextSessionRecord.updatedAt =
                 now;
 
-              await saveSession(
-                nextSessionRecord
+              await saveWithRetry(
+                `next session ${nextSessionRecord.id}`,
+                () => saveSession(nextSessionRecord)
               );
             }
           }
@@ -4521,10 +4544,16 @@ app.put(
         let completionStage = "session";
 
         try {
-          await saveSession(session);
+          await saveWithRetry(
+            `completed session ${sessionId}`,
+            () => saveSession(session)
+          );
 
           completionStage = "journey";
-          await saveJourney(journey);
+          await saveWithRetry(
+            `completed journey ${session.journeyId}`,
+            () => saveJourney(journey)
+          );
         } catch (persistenceError) {
           console.error(
             "[sessions/status] Completion persistence failed",
