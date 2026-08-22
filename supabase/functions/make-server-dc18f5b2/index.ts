@@ -4092,6 +4092,20 @@ app.put(
       const facilitatorAccess =
         isFacilitatorForJourney(journey, auth.user);
 
+      console.log(
+        "[sessions/status] Authorization identity check",
+        {
+          authenticatedUserId: auth.user.id,
+          authenticatedRole: auth.user.role,
+          authenticatedEmail: auth.user.email,
+          sessionId,
+          sessionFacilitatorId: session.facilitatorId ?? null,
+          journeyFacilitatorId: journey.facilitatorId ?? null,
+          journeyFacilitatorEmail: journey.facilitatorEmail ?? null,
+          facilitatorAccess,
+        }
+      );
+
       const currentStatus:
         SessionStatus =
         session.status;
