@@ -4510,26 +4510,38 @@ app.put(
                 session.completedAt
               );
 
-            const nextSessionRecord =
-              await getSession(
-                nextSession.id
-              );
+            try {
+              const nextSessionRecord =
+                await getSession(
+                  nextSession.id
+                );
 
-            if (
-              nextSessionRecord
-            ) {
-              nextSessionRecord.status =
-                "locked";
+              if (
+                nextSessionRecord
+              ) {
+                nextSessionRecord.status =
+                  "locked";
 
-              nextSessionRecord.availableAt =
-                nextSession.availableAt;
+                nextSessionRecord.availableAt =
+                  nextSession.availableAt;
 
-              nextSessionRecord.updatedAt =
-                now;
+                nextSessionRecord.updatedAt =
+                  now;
 
-              await saveWithRetry(
-                `next session ${nextSessionRecord.id}`,
-                () => saveSession(nextSessionRecord)
+                await saveWithRetry(
+                  `next session ${nextSessionRecord.id}`,
+                  () => saveSession(nextSessionRecord)
+                );
+              }
+            } catch (nextSessionError) {
+              console.error(
+                "[sessions/status] Could not synchronize next session after completion",
+                {
+                  sessionId,
+                  nextSessionId: nextSession.id,
+                  facilitatorId: auth.user.id,
+                  error: nextSessionError,
+                }
               );
             }
           }
