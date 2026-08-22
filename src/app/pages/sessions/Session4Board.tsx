@@ -1056,7 +1056,7 @@ export default function Session4Board() {
 
   const step = boardState.currentStep;
   const stepInfo = STEPS[step - 1];
-  const canNavigate = !isParticipant;
+  const canNavigate = true;
 
   if (loading) {
     return (

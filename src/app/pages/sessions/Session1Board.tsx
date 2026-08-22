@@ -4178,10 +4178,6 @@ export default function Session1Board() {
         previous: BoardState,
       ) => BoardState,
     ) => {
-      if (isParticipant) {
-        return;
-      }
-
       dirtyRef.current = true;
 
       setBoardState((previous) => {
@@ -4192,17 +4188,13 @@ export default function Session1Board() {
         return next;
       });
     },
-    [isParticipant],
+    [],
   );
 
   // ─── Navigation ───────────────────────────────────────────────────────────
 
   const goToStep = useCallback(
     (step: number) => {
-      if (isParticipant) {
-        return;
-      }
-
       if (
         step < 1 ||
         step > TOTAL_STEPS
@@ -4217,7 +4209,7 @@ export default function Session1Board() {
         }),
       );
     },
-    [isParticipant, updateBoardState],
+    [updateBoardState],
   );
 
   // ─── End session ──────────────────────────────────────────────────────────
@@ -4320,8 +4312,8 @@ export default function Session1Board() {
 
   // ─── Derived state ────────────────────────────────────────────────────────
 
-  const canEdit = !isParticipant;
-  const canNavigate = !isParticipant;
+  const canEdit = true;
+  const canNavigate = true;
 
   const currentStep =
     boardState.currentStep >= 1 &&

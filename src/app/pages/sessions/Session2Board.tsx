@@ -782,7 +782,7 @@ export default function Session2Board() {
   const s1Cards: string[] = session1Board?.step1?.selectedCards || [];
   const s1Roles: string[] = session1Board?.step4?.selectedRoles || [];
 
-  const canNavigate = !isParticipant;
+  const canNavigate = true;
   const step = boardState.currentStep;
   const stepInfo = STEPS[step - 1];
 

@@ -1170,6 +1170,31 @@ async function saveParticipantBoard(
   );
 }
 
+async function getLinkedParticipantId(
+  journey: any
+) {
+  const participantEmail = normalizeEmail(
+    journey.participantEmail ||
+      journey.participants?.[0]?.email
+  );
+
+  if (!participantEmail) {
+    return null;
+  }
+
+  const userEntries = await kv.getEntriesByPrefix("user:");
+
+  const participant = userEntries.find(
+    (entry: any) =>
+      entry.value?.role === "participant" &&
+      normalizeEmail(entry.value?.email) === participantEmail
+  );
+
+  return participant?.value?.id ||
+    participant?.key?.replace("user:", "") ||
+    null;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PARTICIPANT LINK CHECK
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3770,39 +3795,21 @@ app.get(
         );
       }
 
-      /*
-       * Facilitators can still read the legacy shared board
-       * for backward compatibility. Participant requests are
-       * always isolated by authenticated user ID.
-       */
-      let state;
+      const participantId =
+        auth.user.role === "participant"
+          ? auth.user.id
+          : await getLinkedParticipantId(journey);
 
-      if (
-        auth.user.role ===
-        "participant"
-      ) {
-        state =
-          await getParticipantBoard(
+      let state = participantId
+        ? await getParticipantBoard(
             id,
-            auth.user.id,
-            Number(
-              session.sessionNumber
-            )
-          );
-      } else {
-        state =
-          await kv.get(
-            getLegacyBoardKey(id)
-          );
+            participantId,
+            Number(session.sessionNumber)
+          )
+        : await kv.get(getLegacyBoardKey(id));
 
-        if (!state) {
-          state =
-            getEmptyBoard(
-              Number(
-                session.sessionNumber
-              )
-            );
-        }
+      if (!state) {
+        state = getEmptyBoard(Number(session.sessionNumber));
       }
 
       return c.json({
@@ -3938,37 +3945,18 @@ app.put(
         );
       }
 
-      /*
-       * IMPORTANT:
-       *
-       * Participant progress is now stored against
-       * participant + session.
-       *
-       * The shared session.currentStep is NOT modified
-       * by participant board saves.
-       */
-      if (
-        auth.user.role ===
-        "participant"
-      ) {
-        await saveParticipantBoard(
-          id,
-          auth.user.id,
-          state
-        );
+      const participantId =
+        auth.user.role === "participant"
+          ? auth.user.id
+          : await getLinkedParticipantId(journey);
+
+      if (participantId) {
+        await saveParticipantBoard(id, participantId, state);
       } else {
-        /*
-         * Facilitator writes remain on the legacy/shared
-         * board namespace for compatibility.
-         */
-        await kv.set(
-          getLegacyBoardKey(id),
-          {
-            ...state,
-            updatedAt:
-              new Date().toISOString(),
-          }
-        );
+        await kv.set(getLegacyBoardKey(id), {
+          ...state,
+          updatedAt: new Date().toISOString(),
+        });
       }
 
       return c.json({
