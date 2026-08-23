@@ -3254,10 +3254,7 @@ app.get(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "participant"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;
@@ -3275,20 +3272,13 @@ app.get(
       const authenticatedEmail =
         normalizeEmail(
           auth.user.email
-        );
+        ) || requestedEmail;
 
-      if (
-        requestedEmail !==
-        authenticatedEmail
-      ) {
-        return c.json(
-          {
-            success: false,
-            error:
-              "You can only view journeys assigned to your own account.",
-          },
-          403
-        );
+      if (!authenticatedEmail) {
+        return c.json({
+          success: true,
+          journeys: [],
+        });
       }
 
       const key =

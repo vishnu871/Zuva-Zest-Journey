@@ -850,11 +850,13 @@ function ActionButton({
   journeyId,
   sessionId,
   sessionNumber,
+  canEnable,
 }: {
   status: SessionStatus;
   journeyId: string;
   sessionId: string;
   sessionNumber: number;
+  canEnable: boolean;
 }) {
   const navigate = useNavigate();
   const [starting, setStarting] = useState(false);
@@ -933,14 +935,26 @@ function ActionButton({
   };
 
   if (status === "locked") {
+    if (!canEnable) {
+      return (
+        <button
+          disabled
+          className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-gray-100 text-gray-400 border border-gray-200 cursor-not-allowed"
+        >
+          <Lock className="w-3.5 h-3.5" />
+          Locked
+        </button>
+      );
+    }
+
     return (
       <button
         onClick={enable}
         disabled={starting}
         className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
       >
-        {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
-        {starting ? "Enabling..." : `Enable Session ${sessionNumber}`}
+        {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+        {starting ? "Starting..." : `Start Session ${sessionNumber}`}
       </button>
     );
   }
@@ -972,7 +986,7 @@ function ActionButton({
   return (
     <button
       onClick={go}
-        disabled={starting}
+      disabled={starting}
       className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
     >
       <Play className="w-3.5 h-3.5" />
@@ -990,14 +1004,16 @@ function SessionCard({
   meta,
   entry,
   index,
+  previousCompleted,
 }: {
   journeyId: string;
   meta: (typeof SESSION_META)[0];
   entry: SessionEntry;
   index: number;
+  previousCompleted: boolean;
 }) {
-  const isLocked =
-    entry.status === "locked";
+  const isLocked = entry.status === "locked";
+  const canEnable = previousCompleted || meta.number === 1;
 
   return (
     <motion.div
@@ -1013,58 +1029,46 @@ function SessionCard({
         delay: index * 0.08,
       }}
       className={`relative rounded-2xl border-2 p-5 sm:p-6 transition-all ${
-        isLocked
+        isLocked && !canEnable
           ? "border-border bg-white/50 opacity-70"
           : "border-border bg-white hover:shadow-md"
       }`}
       style={
-        isLocked
+        isLocked && !canEnable
           ? {}
           : {
-              borderColor:
-                `${meta.color}30`,
+              borderColor: `${meta.color}30`,
             }
       }
     >
       <div
         className="inline-flex items-center justify-center w-9 h-9 rounded-xl text-white font-bold text-sm mb-4 shadow-sm"
         style={{
-          backgroundColor:
-            isLocked
-              ? "#9CA3AF"
-              : meta.color,
+          backgroundColor: isLocked && !canEnable ? "#9CA3AF" : meta.color,
         }}
       >
         {meta.number}
       </div>
 
       <div className="flex items-start justify-between gap-3 mb-3 flex-wrap">
-
         <div className="min-w-0">
-
           <h3 className="font-semibold text-foreground text-base leading-tight">
-            Session {meta.number} —{" "}
-            {meta.title}
+            Session {meta.number} — {meta.title}
           </h3>
-
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
             {meta.description}
           </p>
-
         </div>
-
-        <StatusBadge
-          status={entry.status}
-        />
-
+        <StatusBadge status={entry.status} />
       </div>
 
       <div className="flex items-center justify-between flex-wrap gap-3 mt-4">
-
         <span className="text-xs text-muted-foreground">
           {meta.steps} steps{" "}
           {isLocked
-            ? "· Complete previous session to unlock"
+            ? !canEnable
+              ? `· Complete Session ${meta.number - 1} to unlock`
+              : "· Ready to start"
             : ""}
         </span>
 
@@ -1072,20 +1076,16 @@ function SessionCard({
           status={entry.status}
           journeyId={journeyId}
           sessionId={entry.id}
-          sessionNumber={
-            meta.number
-          }
+          sessionNumber={meta.number}
+          canEnable={canEnable}
         />
-
       </div>
 
-      {entry.status ===
-        "completed" && (
+      {entry.status === "completed" && (
         <div className="absolute top-3 right-3 w-6 h-6 rounded-full bg-[#4A1C5C] flex items-center justify-center">
           <CheckCircle className="w-3.5 h-3.5 text-white" />
         </div>
       )}
-
     </motion.div>
   );
 }
@@ -2181,7 +2181,6 @@ export default function JourneyDetail() {
 
             {SESSION_META.map(
               (meta, i) => {
-
                 const entry =
                   sessions.find(
                     (session) =>
@@ -2193,6 +2192,11 @@ export default function JourneyDetail() {
                   return null;
                 }
 
+                const prevSession = meta.number > 1
+                  ? sessions.find((s) => s.number === meta.number - 1)
+                  : null;
+                const isPreviousCompleted = meta.number === 1 || prevSession?.status === "completed";
+
                 return (
                   <SessionCard
                     key={
@@ -2202,6 +2206,7 @@ export default function JourneyDetail() {
                     meta={meta}
                     entry={entry}
                     index={i}
+                    previousCompleted={isPreviousCompleted}
                   />
                 );
               }
