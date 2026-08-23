@@ -3260,123 +3260,74 @@ app.get(
         return auth.response;
       }
 
-      const requestedEmail =
+      const emailParam =
         decodeURIComponent(
           c.req.param(
             "email"
-          )
+          ) || ""
         )
           .trim()
           .toLowerCase();
 
-      const authenticatedEmail =
+      const userEmail =
         normalizeEmail(
           auth.user.email
-        ) || requestedEmail;
+        );
 
-      if (!authenticatedEmail) {
+      const emailsToMatch = Array.from(
+        new Set([userEmail, emailParam].filter(Boolean))
+      );
+
+      if (emailsToMatch.length === 0) {
         return c.json({
           success: true,
           journeys: [],
         });
       }
 
-      const key =
-        `participant_email:${authenticatedEmail}:journeys`;
-
-      let journeyIds: string[] =
-        (await kv.get(key)) ||
-        [];
-
       const journeyEntries =
         await kv.getEntriesByPrefix(
           "journey:"
         );
 
-      const indexed =
-        new Set(
-          journeyIds
-        );
+      const matchedJourneysMap = new Map<string, any>();
 
-      for (
-        const entry of
-        journeyEntries
-      ) {
-        const journey =
-          entry.value;
+      for (const entry of journeyEntries) {
+        const journey = entry.value;
+        if (!journey || !journey.id) continue;
 
-        if (!journey) {
-          continue;
+        const isLinked = emailsToMatch.some(e => isParticipantLinked(journey, e));
+        if (isLinked) {
+          matchedJourneysMap.set(journey.id, journey);
         }
+      }
 
-        if (
-          isParticipantLinked(
-            journey,
-            authenticatedEmail
-          )
-        ) {
-          if (
-            !indexed.has(
-              journey.id
-            )
-          ) {
-            journeyIds.push(
-              journey.id
-            );
-
-            indexed.add(
-              journey.id
-            );
+      // Also check indexes for each email
+      for (const email of emailsToMatch) {
+        const key = `participant_email:${email}:journeys`;
+        const indexedIds: string[] = (await kv.get(key)) || [];
+        for (const id of indexedIds) {
+          if (!matchedJourneysMap.has(id)) {
+            const j = await getJourney(id);
+            if (j && emailsToMatch.some(e => isParticipantLinked(j, e))) {
+              matchedJourneysMap.set(id, j);
+            }
           }
         }
       }
 
-      await kv.set(
-        key,
-        journeyIds
-      );
+      const journeys: any[] = [];
 
-      const journeys: any[] =
-        [];
-
-      const validIds: string[] =
-        [];
-
-      for (
-        const id of journeyIds
-      ) {
-        let journey =
-          await getJourney(id);
-
-        if (!journey) {
-          continue;
-        }
-
-        if (
-          !isParticipantLinked(
-            journey,
-            authenticatedEmail
-          )
-        ) {
-          continue;
-        }
-
-        journey =
-          await ensureJourneySessions(
-            journey
-          );
-
-        journeys.push(
-          journey
-        );
-
-        validIds.push(id);
+      for (let [_, journey] of matchedJourneysMap.entries()) {
+        journey = await ensureJourneySessions(journey);
+        journeys.push(journey);
       }
 
-      await kv.set(
-        key,
-        validIds
-      );
+      // Update indexes for each email
+      for (const email of emailsToMatch) {
+        const key = `participant_email:${email}:journeys`;
+        await kv.set(key, Array.from(matchedJourneysMap.keys()));
+      }
 
       return c.json({
         success: true,
@@ -3767,10 +3718,10 @@ app.post(
         );
       }
 
-      if (
-        journey.facilitatorId !==
-        auth.user.id
-      ) {
+      const facilitatorAccess =
+        isFacilitatorForJourney(journey, auth.user);
+
+      if (!facilitatorAccess) {
         return c.json(
           {
             error:
