@@ -1263,6 +1263,14 @@ function isParticipantLinked(
     return false;
   }
 
+  if (
+    normalizeEmail(
+      journey?.participantEmail
+    ) === normalized
+  ) {
+    return true;
+  }
+
   const participants =
     Array.isArray(
       journey?.participants
@@ -1289,11 +1297,14 @@ function isParticipantLinked(
     return true;
   }
 
-  return (
-    normalizeEmail(
-      journey?.participantEmail
-    ) === normalized
-  );
+  try {
+    const raw = JSON.stringify(journey?.participants || []) + " " + String(journey?.participantEmail || "");
+    if (raw.toLowerCase().includes(normalized)) {
+      return true;
+    }
+  } catch {}
+
+  return false;
 }
 
 function getParticipantRecord(
@@ -3334,7 +3345,10 @@ app.get(
         for (const id of indexedIds) {
           if (!matchedJourneysMap.has(id)) {
             const j = await getJourney(id);
-            if (j && emailsToMatch.some(e => isParticipantLinked(j, e))) {
+            if (j) {
+              if (!j.participantEmail) {
+                j.participantEmail = email;
+              }
               matchedJourneysMap.set(id, j);
             }
           }
