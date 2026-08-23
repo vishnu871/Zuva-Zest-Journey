@@ -1,4 +1,4 @@
-// import { useState, useEffect } from "react";
+﻿// import { useState, useEffect } from "react";
 // import { useNavigate, useLocation } from "react-router";
 // import DashboardLayout from "../../components/DashboardLayout";
 // import { Card } from "../../components/ui/card";
@@ -139,7 +139,7 @@
 //         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
 //           <Card className="p-5 sm:p-6">
 //             <h3 className="mb-5" style={{ color: "#3D6D6C" }}>
-//               {loading ? "Loading…" : `Completed Sessions (${filtered.length})`}
+//               {loading ? "Loadingâ€¦" : `Completed Sessions (${filtered.length})`}
 //             </h3>
 
 //             {loading ? (
@@ -783,37 +783,49 @@ export default function SessionHistory() {
           </motion.div>
         </div>
 
-        {/* ── Structured Report Preview Modal ── */}
+        {/* â”€â”€ Structured Report Preview Modal â€” Sticky-Note Board Style â”€â”€ */}
         <AnimatePresence>
           {viewingReport && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-sm"
+              className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-sm"
               onClick={() => setViewingReport(null)}
             >
               <motion.div
-                initial={{ scale: 0.95, opacity: 0, y: 16 }}
+                initial={{ scale: 0.94, opacity: 0, y: 20 }}
                 animate={{ scale: 1, opacity: 1, y: 0 }}
-                exit={{ scale: 0.95, opacity: 0, y: 16 }}
-                transition={{ duration: 0.2 }}
-                className="bg-[#FDFBF7] rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-[#EBE2D6] overflow-hidden"
+                exit={{ scale: 0.94, opacity: 0, y: 20 }}
+                transition={{ duration: 0.25, ease: "easeOut" }}
+                className="rounded-2xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden"
+                style={{ background: "#FDFBF7" }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* Modal Header */}
-                <div className="bg-[#4A1C5C] text-white p-5 sm:p-6 border-b-4 border-[#D4A843] flex items-start justify-between gap-4">
-                  <div>
-                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#D4A843]">
-                      Zuva Life · Zest Journey
-                    </span>
+                {/* â”€â”€ Modal Header (pinboard top-bar) â”€â”€ */}
+                <div
+                  className="text-white flex items-start justify-between gap-4 px-5 sm:px-7 py-4 sm:py-5 flex-shrink-0"
+                  style={{
+                    background: "linear-gradient(135deg, #4A1C5C 0%, #3D1A50 60%, #2E1040 100%)",
+                    borderBottom: "4px solid #D4A843",
+                  }}
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-6 h-6 rounded-full bg-[#D4A843] flex items-center justify-center flex-shrink-0">
+                        <span className="text-[#2C1810] text-[10px] font-black">Z</span>
+                      </div>
+                      <span className="text-[10px] uppercase font-bold tracking-widest text-[#D4A843]">
+                        Zuva Life Â· Zest Journey
+                      </span>
+                    </div>
                     <h2
-                      className="text-xl sm:text-2xl font-bold mt-1 text-white"
+                      className="text-xl sm:text-2xl font-bold text-white leading-tight"
                       style={{ fontFamily: "Playfair Display, serif" }}
                     >
                       Session {viewingReport.sessionNumber}: {viewingReport.sessionTitle}
                     </h2>
-                    <p className="text-xs text-white/80 mt-0.5">{viewingReport.journeyTitle}</p>
+                    <p className="text-xs text-white/70 mt-0.5 truncate">{viewingReport.journeyTitle}</p>
                   </div>
 
                   <div className="flex items-center gap-2 flex-shrink-0">
@@ -821,12 +833,11 @@ export default function SessionHistory() {
                       size="sm"
                       variant="secondary"
                       onClick={() => window.print()}
-                      className="bg-white/10 hover:bg-white/20 text-white text-xs border border-white/20"
+                      className="bg-white/10 hover:bg-white/20 text-white text-xs border border-white/25 backdrop-blur-sm"
                     >
                       <Printer className="w-3.5 h-3.5 mr-1.5" />
-                      Print
+                      <span className="hidden sm:inline">Print</span>
                     </Button>
-
                     <Button
                       size="sm"
                       onClick={(e) =>
@@ -842,141 +853,322 @@ export default function SessionHistory() {
                         )
                       }
                       disabled={downloadingId === viewingReport.sessionId}
-                      className="bg-[#D4A843] hover:bg-[#C49835] text-[#2C1810] text-xs font-semibold"
+                      className="bg-[#D4A843] hover:bg-[#C49835] text-[#2C1810] text-xs font-bold shadow-lg"
                     >
                       {downloadingId === viewingReport.sessionId ? (
                         <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
                       ) : (
                         <Download className="w-3.5 h-3.5 mr-1.5" />
                       )}
-                      Download PDF
+                      <span className="hidden sm:inline">Download PDF</span>
+                      <span className="sm:hidden">PDF</span>
                     </Button>
-
                     <button
                       onClick={() => setViewingReport(null)}
-                      className="p-1.5 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition-colors ml-1"
+                      className="p-1.5 rounded-lg hover:bg-white/15 text-white/60 hover:text-white transition-colors"
                     >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
 
-                {/* Modal Body */}
-                <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1 bg-[#FDFBF7]">
-                  {/* Overview Card */}
-                  <div className="bg-[#F7F3EE] rounded-xl p-4 border border-[#EBE2D6] grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                    <div>
-                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Participant:</span>
-                      <span className="text-foreground font-medium">{viewingReport.participant}</span>
-                    </div>
-                    <div>
-                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Status:</span>
-                      <Badge className="bg-[#3D6D6C] text-white text-[10px] px-2 py-0.5">
-                        {viewingReport.status.toUpperCase()}
-                      </Badge>
-                    </div>
-                    <div>
-                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Journey:</span>
-                      <span className="text-foreground">{viewingReport.journeyTitle}</span>
-                    </div>
-                    <div>
-                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Date Completed:</span>
-                      <span className="text-foreground">{viewingReport.completedDate || viewingReport.generatedDate}</span>
-                    </div>
-                  </div>
+                {/* â”€â”€ Modal Body â€” Corkboard / Pinboard â”€â”€ */}
+                <div
+                  className="flex-1 overflow-y-auto"
+                  style={{
+                    background: `
+                      radial-gradient(circle at 20% 20%, rgba(74,28,92,0.04) 0%, transparent 50%),
+                      radial-gradient(circle at 80% 80%, rgba(61,109,108,0.04) 0%, transparent 50%),
+                      #F5F0EA
+                    `,
+                  }}
+                >
+                  <div className="p-4 sm:p-6 space-y-6">
 
-                  {/* Sections */}
-                  {viewingReport.sections && viewingReport.sections.length > 0 ? (
-                    viewingReport.sections.map((sec: any, sIdx: number) => {
-                      const colorMap: Record<string, { headerBg: string; textCol: string; borderCol: string }> = {
-                        purple: { headerBg: "bg-[#4A1C5C]", textCol: "text-[#4A1C5C]", borderCol: "border-[#4A1C5C]/20" },
-                        teal: { headerBg: "bg-[#3D6D6C]", textCol: "text-[#3D6D6C]", borderCol: "border-[#3D6D6C]/20" },
-                        gold: { headerBg: "bg-[#D4A843]", textCol: "text-[#8A6A1D]", borderCol: "border-[#D4A843]/30" },
-                        rust: { headerBg: "bg-[#AA5D53]", textCol: "text-[#AA5D53]", borderCol: "border-[#AA5D53]/20" },
-                      };
-                      const theme = colorMap[sec.color] || colorMap.purple;
-
-                      return (
-                        <div
-                          key={sIdx}
-                          className="bg-white rounded-xl border border-border overflow-hidden shadow-sm hover:border-[#4A1C5C]/30 transition-all"
-                        >
-                          <div className={`${theme.headerBg} text-white px-4 py-2.5 flex items-center justify-between`}>
-                            <h4 className="text-xs sm:text-sm font-semibold tracking-wide uppercase">
-                              {sec.title}
-                            </h4>
-                          </div>
-
-                          <div className="p-4 sm:p-5 space-y-3">
-                            {sec.items.map((item: any, iIdx: number) => {
-                              if (item.type === "callout") {
-                                return (
-                                  <div
-                                    key={iIdx}
-                                    className="p-4 rounded-xl bg-[#F7F3EE] border-2 border-[#D4A843] shadow-sm flex items-start gap-3"
-                                  >
-                                    <Sparkles className="w-5 h-5 text-[#D4A843] flex-shrink-0 mt-0.5" />
-                                    <div>
-                                      {item.label && (
-                                        <p className="text-[11px] font-bold text-[#4A1C5C] uppercase tracking-wider mb-1">
-                                          {item.label}
-                                        </p>
-                                      )}
-                                      <p className="text-base font-bold text-[#2C1810]">
-                                        {item.text}
-                                      </p>
-                                    </div>
-                                  </div>
-                                );
-                              }
-
-                              if (item.type === "keyvalue") {
-                                return (
-                                  <div
-                                    key={iIdx}
-                                    className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 pb-2 border-b border-border/50 last:border-b-0 last:pb-0"
-                                  >
-                                    {item.label && (
-                                      <span className="text-xs font-semibold text-[#3D6D6C] sm:w-44 flex-shrink-0">
-                                        {item.label}:
-                                      </span>
-                                    )}
-                                    <span className="text-xs sm:text-sm text-foreground flex-1">
-                                      {item.text}
-                                    </span>
-                                  </div>
-                                );
-                              }
-
-                              return (
-                                <div key={iIdx} className="flex items-start gap-2.5">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-[#4A1C5C] mt-2 flex-shrink-0" />
-                                  <div className="text-xs sm:text-sm text-foreground">
-                                    {item.label && (
-                                      <strong className="text-[#4A1C5C] mr-1.5 font-semibold">
-                                        {item.label}
-                                      </strong>
-                                    )}
-                                    <span>{item.text}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
+                    {/* â”€â”€ Overview Pinned Card â”€â”€ */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.05 }}
+                      className="relative"
+                    >
+                      {/* Pin decoration */}
+                      <div className="absolute -top-2.5 left-6 z-10 w-5 h-5 rounded-full bg-[#D4A843] shadow-md border-2 border-[#C49835] flex items-center justify-center">
+                        <div className="w-1.5 h-1.5 rounded-full bg-white/70" />
+                      </div>
+                      <div
+                        className="rounded-2xl p-4 sm:p-5 border border-[#D4A843]/30 shadow-md"
+                        style={{
+                          background: "linear-gradient(135deg, #FFFDE7 0%, #FFF9C4 100%)",
+                          boxShadow: "0 4px 20px rgba(212,168,67,0.15), 0 2px 8px rgba(0,0,0,0.08)",
+                        }}
+                      >
+                        <div className="flex items-center gap-2 mb-3">
+                          <Sparkles className="w-4 h-4 text-[#D4A843]" />
+                          <span className="text-xs font-bold text-[#8A6A1D] uppercase tracking-wider">Session Overview</span>
                         </div>
-                      );
-                    })
-                  ) : (
-                    <div className="p-8 text-center text-muted-foreground text-sm">
-                      No responses recorded for this session.
-                    </div>
-                  )}
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                          {[
+                            { label: "Participant", value: viewingReport.participant },
+                            { label: "Status", value: viewingReport.status?.toUpperCase() },
+                            { label: "Journey", value: viewingReport.journeyTitle },
+                            { label: "Completed", value: viewingReport.completedDate || viewingReport.generatedDate },
+                          ].map((item) => (
+                            <div key={item.label} className="bg-white/70 rounded-xl p-2.5 border border-[#D4A843]/20">
+                              <p className="text-[10px] font-bold text-[#8A6A1D] uppercase tracking-wide mb-0.5">{item.label}</p>
+                              <p className="text-xs font-semibold text-[#2C1810] leading-snug break-words">{item.value}</p>
+                            </div>
+                          ))}
+                        </div>
+                        {/* Folded corner */}
+                        <div
+                          className="absolute bottom-0 right-0 w-8 h-8"
+                          style={{
+                            background: "linear-gradient(135deg, transparent 50%, rgba(212,168,67,0.25) 50%)",
+                            borderBottomRightRadius: "1rem",
+                          }}
+                        />
+                      </div>
+                    </motion.div>
+
+                    {/* â”€â”€ Sections â”€â”€ */}
+                    {viewingReport.sections && viewingReport.sections.length > 0 ? (
+                      viewingReport.sections.map((sec: any, sIdx: number) => {
+                        const themeMap: Record<string, {
+                          pin: string; zoneBg: string; zoneHeader: string;
+                          headerText: string; noteColors: string[];
+                        }> = {
+                          purple: {
+                            pin: "#4A1C5C",
+                            zoneBg: "rgba(74,28,92,0.04)",
+                            zoneHeader: "linear-gradient(135deg, #4A1C5C, #5A2C6C)",
+                            headerText: "text-white",
+                            noteColors: ["#F3E5F5", "#E1BEE7", "#EDE7F6", "#D1C4E9"],
+                          },
+                          teal: {
+                            pin: "#3D6D6C",
+                            zoneBg: "rgba(61,109,108,0.05)",
+                            zoneHeader: "linear-gradient(135deg, #3D6D6C, #4D7D7C)",
+                            headerText: "text-white",
+                            noteColors: ["#E0F2F1", "#B2DFDB", "#E8F5E9", "#C8E6C9"],
+                          },
+                          gold: {
+                            pin: "#C49835",
+                            zoneBg: "rgba(212,168,67,0.06)",
+                            zoneHeader: "linear-gradient(135deg, #D4A843, #C49835)",
+                            headerText: "text-[#2C1810]",
+                            noteColors: ["#FFFDE7", "#FFF9C4", "#FFF8E1", "#FFECB3"],
+                          },
+                          rust: {
+                            pin: "#AA5D53",
+                            zoneBg: "rgba(170,93,83,0.05)",
+                            zoneHeader: "linear-gradient(135deg, #AA5D53, #BA6D63)",
+                            headerText: "text-white",
+                            noteColors: ["#FBE9E7", "#FFCCBC", "#FFE0B2", "#FFCCBC"],
+                          },
+                        };
+                        const t = themeMap[sec.color] || themeMap.purple;
+
+                        // Separate callouts from other items
+                        const callouts = sec.items.filter((i: any) => i.type === "callout");
+                        const nonCallouts = sec.items.filter((i: any) => i.type !== "callout");
+
+                        return (
+                          <motion.div
+                            key={sIdx}
+                            initial={{ opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: 0.08 + sIdx * 0.06 }}
+                            className="relative"
+                          >
+                            {/* Section pin */}
+                            <div
+                              className="absolute -top-2.5 left-6 z-10 w-5 h-5 rounded-full shadow-md border-2 flex items-center justify-center"
+                              style={{ background: t.pin, borderColor: `${t.pin}99` }}
+                            >
+                              <div className="w-1.5 h-1.5 rounded-full bg-white/70" />
+                            </div>
+
+                            {/* Zone container */}
+                            <div
+                              className="rounded-2xl border overflow-hidden shadow-sm"
+                              style={{
+                                background: `radial-gradient(ellipse at top left, ${t.zoneBg} 0%, transparent 60%), #FAFAF8`,
+                                borderColor: `${t.pin}25`,
+                                boxShadow: `0 4px 16px ${t.pin}12, 0 1px 4px rgba(0,0,0,0.06)`,
+                              }}
+                            >
+                              {/* Zone header */}
+                              <div
+                                className={`px-5 py-3 flex items-center justify-between ${t.headerText}`}
+                                style={{ background: t.zoneHeader }}
+                              >
+                                <h4 className="text-sm font-bold tracking-wide uppercase">{sec.title}</h4>
+                                <span className="text-[10px] opacity-70 font-medium">
+                                  {sec.items.length} item{sec.items.length !== 1 ? "s" : ""}
+                                </span>
+                              </div>
+
+                              <div className="p-4 sm:p-5 space-y-4">
+                                {/* Callout sticky notes (large featured) */}
+                                {callouts.map((item: any, iIdx: number) => (
+                                  <motion.div
+                                    key={`callout-${iIdx}`}
+                                    initial={{ rotate: -1, scale: 0.98 }}
+                                    animate={{ rotate: 0, scale: 1 }}
+                                    className="relative rounded-2xl p-4 sm:p-5 shadow-lg"
+                                    style={{
+                                      background: "linear-gradient(135deg, #FFFDE7 0%, #FFF9C4 100%)",
+                                      border: "2px solid #D4A843",
+                                      boxShadow: "0 6px 24px rgba(212,168,67,0.2), 0 2px 8px rgba(0,0,0,0.08)",
+                                    }}
+                                  >
+                                    <div className="flex items-start gap-3">
+                                      <div className="w-8 h-8 rounded-full bg-[#D4A843] flex items-center justify-center flex-shrink-0 shadow-sm">
+                                        <Sparkles className="w-4 h-4 text-[#2C1810]" />
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        {item.label && (
+                                          <p className="text-[10px] font-bold text-[#8A6A1D] uppercase tracking-widest mb-1.5">
+                                            {item.label}
+                                          </p>
+                                        )}
+                                        <p
+                                          className="text-base sm:text-lg font-bold text-[#2C1810] leading-snug"
+                                          style={{ fontFamily: "Playfair Display, serif" }}
+                                        >
+                                          {item.text}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    {/* Folded corner */}
+                                    <div
+                                      className="absolute bottom-0 right-0 w-7 h-7"
+                                      style={{
+                                        background: "linear-gradient(135deg, transparent 50%, rgba(212,168,67,0.35) 50%)",
+                                        borderBottomRightRadius: "1rem",
+                                      }}
+                                    />
+                                  </motion.div>
+                                ))}
+
+                                {/* Non-callout items as sticky notes grid */}
+                                {nonCallouts.length > 0 && (
+                                  <div className="flex flex-wrap gap-3">
+                                    {nonCallouts.map((item: any, iIdx: number) => {
+                                      const noteColor = t.noteColors[iIdx % t.noteColors.length];
+                                      const rotations = [-2, 1, -1, 2, 0, -1.5, 1.5];
+                                      const rot = rotations[iIdx % rotations.length];
+
+                                      if (item.type === "keyvalue") {
+                                        return (
+                                          <motion.div
+                                            key={iIdx}
+                                            initial={{ opacity: 0, scale: 0.92, rotate: rot }}
+                                            animate={{ opacity: 1, scale: 1, rotate: rot }}
+                                            whileHover={{ scale: 1.03, rotate: 0, zIndex: 10 }}
+                                            transition={{ delay: iIdx * 0.03 }}
+                                            className="relative flex-shrink-0 rounded-lg p-3 cursor-default"
+                                            style={{
+                                              backgroundColor: noteColor,
+                                              width: 180,
+                                              minHeight: 80,
+                                              boxShadow: "0 4px 14px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08)",
+                                              transform: `rotate(${rot}deg)`,
+                                            }}
+                                          >
+                                            {item.label && (
+                                              <p
+                                                className="text-[10px] font-bold uppercase tracking-wider mb-1.5"
+                                                style={{ color: t.pin }}
+                                              >
+                                                {item.label}
+                                              </p>
+                                            )}
+                                            <p className="text-xs font-semibold text-[#2C1810] leading-snug break-words">
+                                              {item.text}
+                                            </p>
+                                            {/* Folded corner */}
+                                            <div
+                                              className="absolute bottom-0 right-0 w-5 h-5"
+                                              style={{
+                                                background: "linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.07) 50%)",
+                                                borderBottomRightRadius: "0.375rem",
+                                              }}
+                                            />
+                                          </motion.div>
+                                        );
+                                      }
+
+                                      // Default bullet â†’ sticky note
+                                      return (
+                                        <motion.div
+                                          key={iIdx}
+                                          initial={{ opacity: 0, scale: 0.9, rotate: rot }}
+                                          animate={{ opacity: 1, scale: 1, rotate: rot }}
+                                          whileHover={{ scale: 1.05, rotate: 0, zIndex: 10 }}
+                                          transition={{ delay: iIdx * 0.03 }}
+                                          className="relative flex-shrink-0 rounded-lg p-3 cursor-default"
+                                          style={{
+                                            backgroundColor: noteColor,
+                                            width: 140,
+                                            minHeight: 100,
+                                            boxShadow: "0 4px 14px rgba(0,0,0,0.12), 0 1px 4px rgba(0,0,0,0.08)",
+                                            transform: `rotate(${rot}deg)`,
+                                          }}
+                                        >
+                                          {item.label && (
+                                            <p
+                                              className="text-[9px] font-black uppercase tracking-widest mb-1"
+                                              style={{ color: t.pin }}
+                                            >
+                                              {item.label}
+                                            </p>
+                                          )}
+                                          <p className="text-xs font-medium text-[#2C1810] leading-snug break-words">
+                                            {item.text}
+                                          </p>
+                                          {/* Folded corner */}
+                                          <div
+                                            className="absolute bottom-0 right-0 w-4 h-4"
+                                            style={{
+                                              background: "linear-gradient(135deg, transparent 50%, rgba(0,0,0,0.08) 50%)",
+                                              borderBottomRightRadius: "0.375rem",
+                                            }}
+                                          />
+                                        </motion.div>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </motion.div>
+                        );
+                      })
+                    ) : (
+                      <div className="flex flex-col items-center py-16 text-center">
+                        <div className="w-16 h-16 rounded-full bg-[#EBE2D6] flex items-center justify-center mb-4">
+                          <FileText className="w-8 h-8 text-[#4A1C5C] opacity-30" />
+                        </div>
+                        <p className="text-muted-foreground text-sm">No responses recorded for this session.</p>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                {/* Modal Footer */}
-                <div className="p-4 bg-[#F7F3EE] border-t border-border flex items-center justify-between text-xs text-muted-foreground">
-                  <span>Zuva Life · Zest Journey | Confidential & Personal</span>
-                  <Button variant="ghost" size="sm" onClick={() => setViewingReport(null)}>
+                {/* â”€â”€ Modal Footer â”€â”€ */}
+                <div
+                  className="px-5 sm:px-7 py-3 flex items-center justify-between text-xs text-muted-foreground flex-shrink-0"
+                  style={{ background: "#F0EBE3", borderTop: "1px solid #E5DDD5" }}
+                >
+                  <div className="flex items-center gap-2">
+                    <div className="w-4 h-4 rounded-full bg-[#4A1C5C] flex items-center justify-center">
+                      <span className="text-white text-[7px] font-black">Z</span>
+                    </div>
+                    <span>Zuva Life Â· Zest Journey | Confidential &amp; Personal</span>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => setViewingReport(null)} className="text-xs">
                     Close
                   </Button>
                 </div>
