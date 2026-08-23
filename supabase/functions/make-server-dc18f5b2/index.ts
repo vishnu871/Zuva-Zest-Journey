@@ -430,8 +430,6 @@ interface AuthenticatedUser {
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SESSION_WAIT_DAYS = 7;
-
 const SESSION_NAMES: Record<number, string> = {
   1: "Identity Discovery",
   2: "Identities In Reality",
@@ -753,39 +751,6 @@ function normalizeSessionNumber(
     number <= 4
     ? number
     : null;
-}
-
-function addDays(
-  date: string | Date,
-  days: number
-) {
-  const result = new Date(date);
-
-  result.setDate(
-    result.getDate() + days
-  );
-
-  return result.toISOString();
-}
-
-function getSessionAvailabilityDate(
-  completedAt: string
-) {
-  return addDays(
-    completedAt,
-    SESSION_WAIT_DAYS
-  );
-}
-
-function isDateAvailable(
-  availableAt?: string | null
-) {
-  if (!availableAt) {
-    return true;
-  }
-
-  return new Date() >=
-    new Date(availableAt);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1148,6 +1113,10 @@ function isFacilitatorForJourney(
     normalizeEmail(journey?.facilitatorEmail) ===
       normalizeEmail(user.email);
 
+  if (ownsByEmail && !journey?.facilitatorId && typeof user.id === "string") {
+    journey.facilitatorId = user.id;
+  }
+
   return ownsById || ownsByEmail;
 }
 
@@ -1416,45 +1385,24 @@ async function ensureJourneySessions(
         session.availableAt ===
         undefined
       ) {
-        /*
-         * Existing sessions are kept compatible.
-         *
-         * If a previous session has a known completedAt,
-         * derive the seven-day availability date.
-         */
-        const sessionNumber =
-          Number(
-            session.sessionNumber
-          );
+        session.availableAt = null;
+        changed = true;
+      }
 
-        if (
-          sessionNumber > 1
-        ) {
-          const previous =
-            journey.sessions.find(
-              (item: any) =>
-                Number(
-                  item.number
-                ) ===
-                sessionNumber - 1
-            );
-
-          if (
-            previous?.completedAt
-          ) {
-            session.availableAt =
-              getSessionAvailabilityDate(
-                previous.completedAt
-              );
-          } else {
-            session.availableAt =
-              null;
-          }
-        } else {
-          session.availableAt =
-            null;
-        }
-
+      if (
+        sessionItem.status !==
+        session.status ||
+        sessionItem.completedAt !==
+        session.completedAt ||
+        sessionItem.availableAt !==
+        session.availableAt
+      ) {
+        sessionItem.status =
+          session.status;
+        sessionItem.completedAt =
+          session.completedAt;
+        sessionItem.availableAt =
+          session.availableAt;
         changed = true;
       }
 
@@ -1541,27 +1489,6 @@ async function ensureJourneySessions(
             : null,
       })
     );
-
-  /*
-   * If the old Session 1 was already completed,
-   * Session 2 is scheduled seven days later.
-   */
-  if (
-    oldCompletedAt
-  ) {
-    const session2 =
-      sessions.find(
-        (item) =>
-          item.number === 2
-      );
-
-    if (session2) {
-      session2.availableAt =
-        getSessionAvailabilityDate(
-          oldCompletedAt
-        );
-    }
-  }
 
   journey.sessions =
     sessions;
@@ -1689,6 +1616,8 @@ function canOpenSession(
   }
 
   return (
+    session.status ===
+      "available" ||
     session.status ===
       "in_progress" ||
     session.status ===
@@ -4119,7 +4048,7 @@ app.get(
       const id =
         c.req.param("id");
 
-      const session =
+      let session =
         await getSession(id);
 
       if (!session) {
@@ -4151,6 +4080,18 @@ app.get(
         await ensureJourneySessions(
           journey
         );
+
+      session = await getSession(id);
+
+      if (!session) {
+        return c.json(
+          {
+            error:
+              "Session not found.",
+          },
+          404
+        );
+      }
 
       const facilitatorAccess =
         isFacilitatorForJourney(journey, auth.user);
@@ -4207,38 +4148,42 @@ app.get(
        * Previous boards are participant-specific.
        */
       if (
-        session.sessionNumber > 1 &&
-        auth.user.role ===
-          "participant" &&
-        !facilitatorAccess
+        Number(session.sessionNumber) > 1
       ) {
-        for (
-          const sessionItem of
-          journey.sessions || []
-        ) {
-          if (
-            Number(
-              sessionItem.number
-            ) <
-            Number(
-              session.sessionNumber
-            )
-          ) {
-            const board =
-              await getParticipantBoard(
-                sessionItem.id,
-                auth.user.id,
-                Number(
-                  sessionItem.number
-                )
-              );
+        const participantId =
+          !facilitatorAccess && auth.user.role === "participant"
+            ? auth.user.id
+            : await getLinkedParticipantId(journey);
 
-            if (board) {
-              previousBoards[
-                Number(
-                  sessionItem.number
-                )
-              ] = board;
+        if (participantId) {
+          for (
+            const sessionItem of
+            journey.sessions || []
+          ) {
+            if (
+              Number(
+                sessionItem.number
+              ) <
+              Number(
+                session.sessionNumber
+              )
+            ) {
+              const board =
+                await getParticipantBoard(
+                  sessionItem.id,
+                  participantId,
+                  Number(
+                    sessionItem.number
+                  )
+                );
+
+              if (board) {
+                previousBoards[
+                  Number(
+                    sessionItem.number
+                  )
+                ] = board;
+              }
             }
           }
         }
@@ -4786,19 +4731,6 @@ app.put(
         return c.json(
           {
             error:
-              "Invalid user role.",
-          },
-          403
-        );
-      }
-
-      if (
-        journey.facilitatorId !==
-        auth.user.id
-      ) {
-        return c.json(
-          {
-            error:
               "You can only manage your own journeys.",
           },
           403
@@ -4873,53 +4805,7 @@ app.put(
             );
           }
 
-          /*
-           * Enforce the seven-day waiting period.
-           */
-          if (
-            !previousSession.completedAt
-          ) {
-            return c.json(
-              {
-                success: false,
-                error:
-                  `Session ${sessionNumber - 1} is completed but has no completion timestamp. Session ${sessionNumber} cannot be enabled safely.`,
-                code:
-                  "PREVIOUS_SESSION_COMPLETION_TIME_MISSING",
-              },
-              400
-            );
-          }
-
-          const availableAt =
-            previousSession.availableAt ||
-            getSessionAvailabilityDate(
-              previousSession.completedAt
-            );
-
-          if (
-            !isDateAvailable(
-              availableAt
-            )
-          ) {
-            return c.json(
-              {
-                success: false,
-
-                error:
-                  `Session ${sessionNumber} cannot be enabled yet. It becomes available after the required ${SESSION_WAIT_DAYS}-day waiting period.`,
-
-                code:
-                  "SESSION_WAIT_PERIOD",
-
-                availableAt,
-              },
-              400
-            );
-          }
-
-          session.availableAt =
-            availableAt;
+          session.availableAt = null;
         }
 
         const now =
@@ -5067,12 +4953,7 @@ app.put(
             session.sessionNumber
           );
 
-        /*
-         * DO NOT automatically unlock the next session.
-         *
-         * Instead, schedule it seven days after this
-         * session was completed.
-         */
+        // The facilitator must explicitly enable the next session.
         if (
           sessionNumber < 4
         ) {
@@ -5094,10 +4975,7 @@ app.put(
             nextSession.status =
               "locked";
 
-            nextSession.availableAt =
-              getSessionAvailabilityDate(
-                session.completedAt
-              );
+            nextSession.availableAt = null;
 
             try {
               const nextSessionRecord =
@@ -5111,8 +4989,7 @@ app.put(
                 nextSessionRecord.status =
                   "locked";
 
-                nextSessionRecord.availableAt =
-                  nextSession.availableAt;
+                nextSessionRecord.availableAt = null;
 
                 nextSessionRecord.updatedAt =
                   now;
@@ -5606,10 +5483,10 @@ app.post(
         );
       }
 
-      if (
-        journey.facilitatorId !==
-        auth.user.id
-      ) {
+      const facilitatorAccess =
+        isFacilitatorForJourney(journey, auth.user);
+
+      if (!facilitatorAccess) {
         return c.json(
           {
             error:
@@ -5688,52 +5565,7 @@ app.post(
           );
         }
 
-        if (
-          !previous.completedAt
-        ) {
-          return c.json(
-            {
-              success: false,
-              error:
-                `Session ${sessionNumber - 1} does not have a completion timestamp.`,
-              code:
-                "PREVIOUS_SESSION_COMPLETION_TIME_MISSING",
-            },
-            400
-          );
-        }
-
-        const availableAt =
-          previous.availableAt ||
-          getSessionAvailabilityDate(
-            previous.completedAt
-          );
-
-        if (
-          !isDateAvailable(
-            availableAt
-          )
-        ) {
-          return c.json(
-            {
-              success: false,
-
-              error:
-                `Session ${sessionNumber} is not available yet. The seven-day waiting period ends on ${new Date(
-                  availableAt
-                ).toISOString()}.`,
-
-              code:
-                "SESSION_WAIT_PERIOD",
-
-              availableAt,
-            },
-            400
-          );
-        }
-
-        target.availableAt =
-          availableAt;
+        target.availableAt = null;
       }
 
       const now =
@@ -5751,10 +5583,7 @@ app.post(
         session.status =
           "available";
 
-        session.availableAt =
-          target.availableAt ||
-          session.availableAt ||
-          now;
+        session.availableAt = null;
 
         session.updatedAt =
           now;

@@ -859,14 +859,21 @@ export default function FacilitatorDashboard() {
           );
         }
 
-        if (
-          response.status === 401 ||
-          response.status === 403
-        ) {
+        if (response.status === 401) {
           navigate(
             "/facilitator/login",
             { replace: true }
           );
+          return;
+        }
+
+        if (response.status === 403) {
+          console.error(
+            "[facilitator-dashboard] API access denied:",
+            data
+          );
+          setJourneys([]);
+          setSessionProgress({});
           return;
         }
 
@@ -991,15 +998,6 @@ export default function FacilitatorDashboard() {
   const openSession = async (
     session: SessionEntry
   ) => {
-    /*
-     * TEST MODE:
-     *
-     * There is intentionally NO 7-day check here.
-     *
-     * The facilitator can open any of the four
-     * sessions while testing the journey.
-     */
-
     try {
       const {
         headers,
@@ -1117,10 +1115,7 @@ export default function FacilitatorDashboard() {
         // ignore
       }
 
-      if (
-        response.status === 401 ||
-        response.status === 403
-      ) {
+      if (response.status === 401) {
         window.alert(
           "Your login session has expired. Please sign in again."
         );
@@ -1130,6 +1125,14 @@ export default function FacilitatorDashboard() {
           { replace: true }
         );
 
+        return;
+      }
+
+      if (response.status === 403) {
+        window.alert(
+          data?.error ||
+            "You do not have permission to delete this journey."
+        );
         return;
       }
 
@@ -1261,9 +1264,8 @@ export default function FacilitatorDashboard() {
               </p>
 
               <p className="text-xs text-[#7A5A12]/80 mt-0.5">
-                All four sessions can be opened
-                during testing. There is no
-                7-day waiting period.
+                Enable each session after its
+                previous session is completed.
               </p>
             </div>
 

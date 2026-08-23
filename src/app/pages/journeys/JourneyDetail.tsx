@@ -847,10 +847,12 @@ function StatusBadge({
 
 function ActionButton({
   status,
+  journeyId,
   sessionId,
   sessionNumber,
 }: {
   status: SessionStatus;
+  journeyId: string;
   sessionId: string;
   sessionNumber: number;
 }) {
@@ -899,14 +901,46 @@ function ActionButton({
     );
   };
 
+  const enable = async () => {
+    setStarting(true);
+
+    try {
+      const headers = await getAuthenticatedHeaders();
+      const response = await fetch(
+        `${API}/journeys/${journeyId}/sessions/${sessionNumber}/enable`,
+        {
+          method: "POST",
+          headers,
+        }
+      );
+      const data = await response.json();
+
+      if (!response.ok || !data?.success) {
+        throw new Error(data?.error || "Failed to enable session.");
+      }
+
+      navigate(
+        `/facilitator/session/${sessionId}/board`
+      );
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to enable session."
+      );
+      setStarting(false);
+    }
+  };
+
   if (status === "locked") {
     return (
       <button
-        disabled
-        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm text-gray-400 border border-gray-200 bg-gray-50 cursor-not-allowed"
+        onClick={enable}
+        disabled={starting}
+        className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold bg-[#4A1C5C] text-white hover:bg-[#3A1C4C] transition-colors shadow-sm"
       >
-        <Lock className="w-3.5 h-3.5" />
-        Locked
+        {starting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Lock className="w-3.5 h-3.5" />}
+        {starting ? "Enabling..." : `Enable Session ${sessionNumber}`}
       </button>
     );
   }
@@ -952,10 +986,12 @@ function ActionButton({
 // ─────────────────────────────────────────────────────────────────────────────
 
 function SessionCard({
+  journeyId,
   meta,
   entry,
   index,
 }: {
+  journeyId: string;
   meta: (typeof SESSION_META)[0];
   entry: SessionEntry;
   index: number;
@@ -1034,6 +1070,7 @@ function SessionCard({
 
         <ActionButton
           status={entry.status}
+          journeyId={journeyId}
           sessionId={entry.id}
           sessionNumber={
             meta.number
@@ -2161,6 +2198,7 @@ export default function JourneyDetail() {
                     key={
                       meta.number
                     }
+                    journeyId={journey.id}
                     meta={meta}
                     entry={entry}
                     index={i}

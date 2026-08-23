@@ -409,17 +409,11 @@ export default function SessionRouter() {
          * ─────────────────────────────────────────
          *
          * Participants cannot enter locked sessions.
-         *
-         * IMPORTANT:
-         *
-         * Completing Session 1 does NOT unlock Session 2.
-         *
-         * The facilitator must explicitly unlock Session 2.
+         * Once enabled (available or in_progress), participants can load the board.
          */
         if (
           isParticipant &&
-          (session.status === "locked" ||
-            session.status === "available")
+          session.status === "locked"
         ) {
           if (!cancelled) {
             setError(
@@ -432,13 +426,30 @@ export default function SessionRouter() {
 
         /*
          * ─────────────────────────────────────────
+         * FACILITATOR ACCESS CONTROL
+         * ─────────────────────────────────────────
+         *
+         * Locked sessions cannot be started until previous session completes.
+         */
+        if (
+          isFacilitator &&
+          session.status === "locked"
+        ) {
+          if (!cancelled) {
+            setError(
+              "This session is locked. Complete the previous session first."
+            );
+          }
+
+          return;
+        }
+
+        /*
+         * ─────────────────────────────────────────
          * COMPLETED SESSION
          * ─────────────────────────────────────────
          *
-         * Completed sessions can still be opened for
-         * review.
-         *
-         * We DO NOT change their status here.
+         * Completed sessions can still be opened for review.
          */
         if (
           session.status === "completed"
@@ -455,18 +466,7 @@ export default function SessionRouter() {
          * FACILITATOR START
          * ─────────────────────────────────────────
          *
-         * A facilitator can start an AVAILABLE
-         * session.
-         *
-         * This changes:
-         *
-         * available → in_progress
-         *
-         * It does NOT:
-         *
-         * completed → available
-         *
-         * and it does NOT unlock the next session.
+         * A facilitator moving an available session to in_progress.
          */
         if (
           isFacilitator &&
@@ -497,11 +497,6 @@ export default function SessionRouter() {
               );
             }
 
-            /*
-             * If the backend rejects the status update
-             * because of authentication, try once more
-             * with a refreshed token.
-             */
             if (
               statusResponse.status === 401 ||
               statusResponse.status === 403
@@ -515,19 +510,9 @@ export default function SessionRouter() {
                 await supabase.auth.refreshSession();
 
               if (
-                refreshError ||
-                !refreshedSession?.access_token
+                !refreshError &&
+                refreshedSession?.access_token
               ) {
-                if (!cancelled) {
-                  setError(
-                    "Your session has expired. Please sign in again."
-                  );
-                }
-
-                return;
-              }
-
-              const retryStatusResponse =
                 await fetch(
                   `${API}/sessions/${sessionId}/status`,
                   {
@@ -544,59 +529,13 @@ export default function SessionRouter() {
                     }),
                   }
                 );
-
-              let retryStatusData: any =
-                null;
-
-              try {
-                retryStatusData =
-                  await retryStatusResponse.json();
-              } catch (retryStatusJsonError) {
-                console.error(
-                  "[SessionRouter] Failed to parse retry status response:",
-                  retryStatusJsonError
-                );
               }
-
-              if (
-                !retryStatusResponse.ok ||
-                !retryStatusData?.success
-              ) {
-                if (!cancelled) {
-                  setError(
-                    retryStatusData?.error ||
-                      "You could not start this session."
-                  );
-                }
-
-                return;
-              }
-            } else if (
-              !statusResponse.ok ||
-              !statusData?.success
-            ) {
-              if (!cancelled) {
-                setError(
-                  statusData?.error ||
-                    "You could not start this session."
-                );
-              }
-
-              return;
             }
           } catch (statusError) {
-            console.error(
-              "[SessionRouter] Failed to start facilitator session:",
+            console.warn(
+              "[SessionRouter] Could not update status to in_progress:",
               statusError
             );
-
-            if (!cancelled) {
-              setError(
-                "Unable to start this session. Please try again."
-              );
-            }
-
-            return;
           }
         }
 

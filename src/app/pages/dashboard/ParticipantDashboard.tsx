@@ -458,9 +458,7 @@ function normalizeSession(
     allowedStatuses.includes(
       raw.status
     )
-      ? raw.status === "available"
-        ? "locked"
-        : raw.status
+      ? raw.status
       : "locked";
 
   return {
@@ -811,9 +809,7 @@ export default function ParticipantDashboard() {
 
           if (
             response.status ===
-              401 ||
-            response.status ===
-              403
+            401
           ) {
             console.error(
               "[participant-dashboard] API authentication failed:",
@@ -829,6 +825,18 @@ export default function ParticipantDashboard() {
               {
                 replace: true,
               }
+            );
+
+            return;
+          }
+
+          if (
+            response.status ===
+            403
+          ) {
+            console.error(
+              "[participant-dashboard] API access denied:",
+              data
             );
 
             return;
@@ -957,6 +965,28 @@ export default function ParticipantDashboard() {
 
   useEffect(() => {
     loadJourneys();
+  }, [loadJourneys]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        void loadJourneys(true);
+      }
+    };
+
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener(
+      "visibilitychange",
+      refreshWhenVisible
+    );
+
+    return () => {
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener(
+        "visibilitychange",
+        refreshWhenVisible
+      );
+    };
   }, [loadJourneys]);
 
   // ───────────────────────────────────────────────────────────────────────────

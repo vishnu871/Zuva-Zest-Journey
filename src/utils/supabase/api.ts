@@ -3,9 +3,16 @@ import { createClient } from "./client";
 export async function getAuthHeaders(): Promise<HeadersInit> {
   const supabase = createClient();
 
-  const {
+  let {
     data: { session },
   } = await supabase.auth.getSession();
+
+  if (!session?.access_token) {
+    const {
+      data: { session: refreshedSession },
+    } = await supabase.auth.refreshSession();
+    session = refreshedSession;
+  }
 
   return {
     "Content-Type": "application/json",
