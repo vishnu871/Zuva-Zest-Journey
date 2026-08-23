@@ -1043,6 +1043,31 @@ async function getJourney(
   );
 }
 
+async function ensureFacilitatorJourneyIndex(
+  journey: any
+) {
+  if (!journey || !journey.id) return;
+
+  if (journey.facilitatorId) {
+    const key = `facilitator:${journey.facilitatorId}:journeys`;
+    const ids: string[] = (await kv.get(key)) || [];
+    if (!ids.includes(journey.id)) {
+      ids.push(journey.id);
+      await kv.set(key, ids);
+    }
+  }
+
+  const email = normalizeEmail(journey.facilitatorEmail);
+  if (email) {
+    const emailKey = `facilitator_email:${email}:journeys`;
+    const emailIds: string[] = (await kv.get(emailKey)) || [];
+    if (!emailIds.includes(journey.id)) {
+      emailIds.push(journey.id);
+      await kv.set(emailKey, emailIds);
+    }
+  }
+}
+
 async function saveJourney(
   journey: any
 ) {
@@ -1050,6 +1075,8 @@ async function saveJourney(
     `journey:${journey.id}`,
     journey
   );
+  await ensureFacilitatorJourneyIndex(journey);
+  await ensureParticipantJourneyIndex(journey);
 }
 
 async function getSession(
@@ -3155,99 +3182,75 @@ app.get(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "facilitator"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;
       }
 
-      const requestedUserId =
-        c.req.param(
-          "userId"
+      const userEmail = normalizeEmail(auth.user.email);
+      const facilitatorKey = `facilitator:${auth.user.id}:journeys`;
+      const emailKey = userEmail ? `facilitator_email:${userEmail}:journeys` : null;
+
+      const journeyEntries =
+        await kv.getEntriesByPrefix(
+          "journey:"
         );
 
-      if (
-        requestedUserId !==
-        auth.user.id
-      ) {
-        return c.json(
-          {
-            success: false,
-            error:
-              "You can only view your own journeys.",
-          },
-          403
-        );
+      const matchedJourneysMap = new Map<string, any>();
+
+      for (const entry of journeyEntries) {
+        const journey = entry.value;
+        if (!journey || !journey.id) continue;
+
+        if (isFacilitatorForJourney(journey, auth.user)) {
+          if (!journey.facilitatorId) {
+            journey.facilitatorId = auth.user.id;
+          }
+          matchedJourneysMap.set(journey.id, journey);
+        }
       }
 
-      const key =
-        `facilitator:${auth.user.id}:journeys`;
+      // Also check indexed IDs
+      const indexedIds: string[] = Array.from(
+        new Set([
+          ...((await kv.get(facilitatorKey)) || []),
+          ...(emailKey ? (await kv.get(emailKey)) || [] : []),
+        ])
+      );
 
-      const journeyIds: string[] =
-        (await kv.get(key)) ||
-        [];
-
-      const journeys: any[] =
-        [];
-
-      const validIds: string[] =
-        [];
-
-      for (
-        const id of journeyIds
-      ) {
-        let journey =
-          await getJourney(id);
-
-        if (!journey) {
-          continue;
+      for (const id of indexedIds) {
+        if (!matchedJourneysMap.has(id)) {
+          const j = await getJourney(id);
+          if (j && isFacilitatorForJourney(j, auth.user)) {
+            if (!j.facilitatorId) {
+              j.facilitatorId = auth.user.id;
+            }
+            matchedJourneysMap.set(id, j);
+          }
         }
-
-        if (
-          journey.facilitatorId !==
-          auth.user.id
-        ) {
-          continue;
-        }
-
-        journey =
-          await ensureJourneySessions(
-            journey
-          );
-
-        journeys.push(
-          journey
-        );
-
-        validIds.push(id);
       }
 
-      if (
-        validIds.length !==
-        journeyIds.length
-      ) {
-        await kv.set(
-          key,
-          validIds
-        );
+      const journeys: any[] = [];
+
+      for (let [_, journey] of matchedJourneysMap.entries()) {
+        journey = await ensureJourneySessions(journey);
+        journeys.push(journey);
+      }
+
+      const validIds = Array.from(matchedJourneysMap.keys());
+      await kv.set(facilitatorKey, validIds);
+      if (emailKey) {
+        await kv.set(emailKey, validIds);
       }
 
       return c.json({
         success: true,
-
-        journeys:
-          journeys.sort(
-            (a, b) =>
-              new Date(
-                b.createdAt || 0
-              ).getTime() -
-              new Date(
-                a.createdAt || 0
-              ).getTime()
-          ),
+        journeys: journeys.sort(
+          (a, b) =>
+            new Date(b.createdAt || 0).getTime() -
+            new Date(a.createdAt || 0).getTime()
+        ),
       });
     } catch (error) {
       console.error(
