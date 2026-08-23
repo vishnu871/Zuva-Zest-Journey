@@ -574,6 +574,9 @@ async function getAuthenticatedUser(
     ) {
       role =
         kvRole;
+    } else {
+      role =
+        "participant";
     }
 
     // ─────────────────────────────────────
@@ -1229,19 +1232,30 @@ function isParticipantLinked(
   const normalized =
     normalizeEmail(email);
 
+  if (!normalized) {
+    return false;
+  }
+
   const participants =
     Array.isArray(
-      journey.participants
+      journey?.participants
     )
       ? journey.participants
       : [];
 
   const linked =
     participants.some(
-      (participant: any) =>
-        normalizeEmail(
-          participant?.email
-        ) === normalized
+      (participant: any) => {
+        const participantEmail =
+          typeof participant === "string"
+            ? participant
+            : (participant?.email || "");
+        return (
+          normalizeEmail(
+            participantEmail
+          ) === normalized
+        );
+      }
     );
 
   if (linked) {
@@ -1250,7 +1264,7 @@ function isParticipantLinked(
 
   return (
     normalizeEmail(
-      journey.participantEmail
+      journey?.participantEmail
     ) === normalized
   );
 }
@@ -1264,12 +1278,19 @@ function getParticipantRecord(
 
   const participant =
     (
-      journey.participants || []
+      journey?.participants || []
     ).find(
-      (item: any) =>
-        normalizeEmail(
-          item?.email
-        ) === normalized
+      (item: any) => {
+        const itemEmail =
+          typeof item === "string"
+            ? item
+            : (item?.email || "");
+        return (
+          normalizeEmail(
+            itemEmail
+          ) === normalized
+        );
+      }
     );
 
   return participant || null;
@@ -1282,15 +1303,14 @@ function getParticipantRecord(
 async function ensureParticipantJourneyIndex(
   journey: any
 ) {
+  if (!journey || !journey.id) return;
+
   const emails =
     new Set<string>();
 
   if (journey.participantEmail) {
-    emails.add(
-      normalizeEmail(
-        journey.participantEmail
-      )
-    );
+    const e = normalizeEmail(journey.participantEmail);
+    if (e) emails.add(e);
   }
 
   for (
@@ -1299,7 +1319,9 @@ async function ensureParticipantJourneyIndex(
   ) {
     const email =
       normalizeEmail(
-        participant?.email
+        typeof participant === "string"
+          ? participant
+          : participant?.email
       );
 
     if (email) {
@@ -3762,41 +3784,33 @@ app.post(
 
       const alreadyLinked =
         journey.participants.some(
-          (participant: any) =>
-            normalizeEmail(
-              participant?.email
-            ) === email
+          (participant: any) => {
+            const pEmail =
+              typeof participant === "string"
+                ? participant
+                : (participant?.email || "");
+            return (
+              normalizeEmail(pEmail) === email
+            );
+          }
         );
 
-      if (
-        alreadyLinked
-      ) {
-        return c.json(
-          {
-            error:
-              `${email} is already linked to this journey.`,
-          },
-          400
-        );
+      if (!alreadyLinked) {
+        journey.participants.push({
+          email,
+          linkedAt: new Date().toISOString(),
+        });
       }
 
-      journey.participants.push({
-        email,
-
-        linkedAt:
-          new Date().toISOString(),
-      });
-
       if (
-        !journey.participantEmail
+        !journey.participantEmail ||
+        normalizeEmail(journey.participantEmail) === ""
       ) {
-        journey.participantEmail =
-          email;
+        journey.participantEmail = email;
       }
 
-      await saveJourney(
-        journey
-      );
+      await saveJourney(journey);
+      await ensureParticipantJourneyIndex(journey);
 
       const participantKey =
         `participant_email:${email}:journeys`;
