@@ -1697,326 +1697,896 @@ function canOpenSession(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PDF
+// ─────────────────────────────────────────────────────────────────────────────
+// PDF GENERATOR & STRUCTURED SESSION REPORT
 // ─────────────────────────────────────────────────────────────────────────────
 
-function pdfEscape(
-  value: string
-) {
-  return value
+function pdfEscape(value: string): string {
+  if (!value) return "";
+  return String(value)
     .replace(/\\/g, "\\\\")
     .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
+    .replace(/\)/g, "\\)")
+    .replace(/[^\x20-\x7E]/g, (ch) => {
+      if (ch === "—" || ch === "–") return " - ";
+      if (ch === "•") return "*";
+      if (ch === "’" || ch === "‘") return "'";
+      if (ch === "“" || ch === "”") return '"';
+      if (ch === "…") return "...";
+      if (ch === "·") return "-";
+      if (ch === "✓") return "[x]";
+      return "";
+    });
 }
 
-function flattenBoard(
-  value: any,
-  prefix = ""
-): string[] {
+function wrapPdfText(text: string, maxChars = 75): string[] {
+  if (!text) return [];
+  const words = text.split(/\s+/);
   const lines: string[] = [];
-
-  if (
-    value === null ||
-    value === undefined
-  ) {
-    return lines;
+  let current = "";
+  for (const word of words) {
+    if (!word) continue;
+    if ((current + " " + word).trim().length <= maxChars) {
+      current = (current + " " + word).trim();
+    } else {
+      if (current) lines.push(current);
+      current = word;
+    }
   }
-
-  if (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  ) {
-    lines.push(
-      prefix
-        ? `${prefix}: ${String(value)}`
-        : String(value)
-    );
-
-    return lines;
-  }
-
-  if (Array.isArray(value)) {
-    value.forEach(
-      (item, index) => {
-        if (
-          typeof item === "string" ||
-          typeof item === "number" ||
-          typeof item === "boolean"
-        ) {
-          lines.push(
-            `${
-              prefix ||
-              "Item"
-            } ${index + 1}: ${String(item)}`
-          );
-        } else {
-          lines.push(
-            `${
-              prefix ||
-              "Item"
-            } ${index + 1}`
-          );
-
-          lines.push(
-            ...flattenBoard(
-              item
-            )
-          );
-        }
-      }
-    );
-
-    return lines;
-  }
-
-  if (
-    typeof value === "object"
-  ) {
-    Object.entries(value).forEach(
-      ([key, child]) => {
-        if (
-          key === "updatedAt" ||
-          key === "currentStep"
-        ) {
-          return;
-        }
-
-        const label =
-          prefix
-            ? `${prefix} — ${key}`
-            : key;
-
-        if (
-          child !== null &&
-          typeof child === "object"
-        ) {
-          lines.push(label);
-
-          lines.push(
-            ...flattenBoard(
-              child
-            )
-          );
-        } else {
-          lines.push(
-            `${label}: ${String(child)}`
-          );
-        }
-      }
-    );
-  }
-
+  if (current) lines.push(current);
   return lines;
 }
 
-function createPdf(
-  lines: string[]
-): Uint8Array {
-  const PAGE_WIDTH = 595;
-  const PAGE_HEIGHT = 842;
-  const marginX = 48;
-  const topY = 790;
-  const lineHeight = 16;
-
-  const linesPerPage =
-    Math.floor(
-      (topY - 55) /
-        lineHeight
-    );
-
-  const pages: string[][] = [];
-
-  for (
-    let i = 0;
-    i < lines.length;
-    i += linesPerPage
-  ) {
-    pages.push(
-      lines.slice(
-        i,
-        i + linesPerPage
-      )
-    );
-  }
-
-  if (
-    pages.length === 0
-  ) {
-    pages.push([]);
-  }
-
-  const objects: string[] = [];
-
-  objects.push(
-    "<< /Type /Catalog /Pages 2 0 R >>"
-  );
-
-  const pageObjectNumbers: number[] = [];
-
-  const fontObjectNumber = 3;
-  const firstPageObject = 4;
-
-  pages.forEach(
-    (_, index) => {
-      pageObjectNumbers.push(
-        firstPageObject +
-          index * 2
-      );
-    }
-  );
-
-  const kids =
-    pageObjectNumbers
-      .map(
-        number =>
-          `${number} 0 R`
-      )
-      .join(" ");
-
-  objects.push(
-    `<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`
-  );
-
-  objects.push(
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"
-  );
-
-  pages.forEach(
-    (pageLines, pageIndex) => {
-      const pageObject =
-        firstPageObject +
-        pageIndex * 2;
-
-      const contentObject =
-        pageObject + 1;
-
-      objects[
-        pageObject - 1
-      ] =
-        `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${fontObjectNumber} 0 R >> >> /Contents ${contentObject} 0 R >>`;
-
-      let stream = "BT\n";
-
-      stream +=
-        "/F1 11 Tf\n";
-
-      stream +=
-        `${marginX} ${topY} Td\n`;
-
-      for (
-        const line of pageLines
-      ) {
-        const safe =
-          line
-            .replace(
-              /[^\x20-\x7E]/g,
-              ""
-            )
-            .slice(0, 105);
-
-        stream +=
-          `(${pdfEscape(safe)}) Tj\n`;
-
-        stream +=
-          `0 -${lineHeight} Td\n`;
-      }
-
-      stream += "ET";
-
-      objects[
-        contentObject - 1
-      ] =
-        `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
-    }
-  );
-
-  let pdf =
-    "%PDF-1.4\n";
-
-  const offsets: number[] =
-    [0];
-
-  objects.forEach(
-    (object, index) => {
-      offsets.push(
-        pdf.length
-      );
-
-      pdf +=
-        `${index + 1} 0 obj\n`;
-
-      pdf +=
-        `${object}\n`;
-
-      pdf +=
-        "endobj\n";
-    }
-  );
-
-  const xrefOffset =
-    pdf.length;
-
-  pdf +=
-    `xref\n0 ${
-      objects.length + 1
-    }\n`;
-
-  pdf +=
-    "0000000000 65535 f \n";
-
-  for (
-    let i = 1;
-    i < offsets.length;
-    i++
-  ) {
-    pdf +=
-      `${String(
-        offsets[i]
-      ).padStart(
-        10,
-        "0"
-      )} 00000 n \n`;
-  }
-
-  pdf +=
-    `trailer\n<< /Size ${
-      objects.length + 1
-    } /Root 1 0 R >>\n`;
-
-  pdf +=
-    `startxref\n${xrefOffset}\n%%EOF`;
-
-  return new TextEncoder().encode(
-    pdf
-  );
+interface ReportItem {
+  type: "bullet" | "callout" | "keyvalue" | "text";
+  label?: string;
+  text: string;
 }
 
-function uint8ToBase64(
-  bytes: Uint8Array
-) {
-  let binary = "";
+interface ReportSection {
+  title: string;
+  color: "purple" | "teal" | "gold" | "rust";
+  items: ReportItem[];
+}
 
-  const chunkSize =
-    0x8000;
+interface StructuredReportData {
+  journeyTitle: string;
+  sessionNumber: number;
+  sessionTitle: string;
+  participant: string;
+  status: string;
+  completedDate: string;
+  generatedDate: string;
+  sections: ReportSection[];
+  filename: string;
+}
 
-  for (
-    let i = 0;
-    i < bytes.length;
-    i += chunkSize
-  ) {
-    binary +=
-      String.fromCharCode(
-        ...bytes.subarray(
-          i,
-          Math.min(
-            i + chunkSize,
-            bytes.length
-          )
-        )
-      );
+const ALL_CARDS_MAP: Record<string, { label: string; desc?: string }> = {
+  // Identity Cards (Session 1 Step 1 & Step 4)
+  friend: { label: "Friend / Companion", desc: "Connection, loyalty & shared life" },
+  athlete: { label: "Athlete / Active", desc: "Vitality, movement & physical discipline" },
+  professional: { label: "Professional", desc: "Career, craft & domain mastery" },
+  mentor: { label: "Mentor / Guide", desc: "Guidance, wisdom & developing others" },
+  creative: { label: "Creative Soul", desc: "Art, ideas & authentic self-expression" },
+  activist: { label: "Activist", desc: "Justice, purpose & driving positive change" },
+  philanthropist: { label: "Philanthropist", desc: "Generosity, legacy & giving back" },
+  parent: { label: "Parent / Grandparent", desc: "Nurturing family & lineage" },
+  community_leader: { label: "Community Leader", desc: "Civic impact & community service" },
+  explorer: { label: "Explorer / Adventurer", desc: "Curiosity, discovery & new horizons" },
+  entrepreneur: { label: "Entrepreneur", desc: "Building ventures & innovation" },
+  caregiver: { label: "Caregiver / Nurturer", desc: "Support, healing & caring presence" },
+  spiritual: { label: "Spiritual Seeker", desc: "Faith, inner life & deeper meaning" },
+  learner: { label: "Lifelong Learner", desc: "Knowledge, skills & personal growth" },
+  artist: { label: "Artist / Creator", desc: "Creation, aesthetics & artistic voice" },
+  nature: { label: "Nature Lover", desc: "Ecology, outdoors & connection to earth" },
+
+  // Role Cards (Session 1 Step 4, 5, 6)
+  venture_builder: { label: "Learning / Venture Builder", desc: "Designing & launching initiatives" },
+  volunteer: { label: "Volunteer", desc: "Hands-on community contribution" },
+  advisor: { label: "Strategic Advisor", desc: "Providing high-level counsel & guidance" },
+  mentor_role: { label: "Mentor", desc: "Nurturing and developing emerging talent" },
+  board_member: { label: "Board Member", desc: "Governance, strategy & fiduciary leadership" },
+  executive_coach: { label: "Executive Coach", desc: "Facilitating leadership breakthroughs" },
+  author: { label: "Author / Writer", desc: "Sharing insights & thought leadership" },
+  consultant: { label: "Independent Consultant", desc: "Solving complex organizational challenges" },
+  social_entrepreneur: { label: "Social Entrepreneur", desc: "Mission-driven innovation & impact" },
+  speaker: { label: "Speaker / Facilitator", desc: "Inspiring, teaching & engaging groups" },
+  visiting_faculty: { label: "Visiting Faculty", desc: "Academic teaching & thought leadership" },
+
+  // Chapters (Book of Life)
+  childhood: { label: "Childhood & Early Roots", desc: "Formative upbringing & foundation" },
+  education: { label: "Education & Formative Learning", desc: "Early schooling & skill-building" },
+  early_career: { label: "Early Career Foundations", desc: "First professional milestones" },
+  leadership: { label: "Leadership & Growth", desc: "Taking on leadership & responsibility" },
+  personal_crossroads: { label: "Personal Crossroads & Pivots", desc: "Significant transitions & turning points" },
+  peak_achievement: { label: "Peak Professional Achievement", desc: "Major milestones & accomplishments" },
+  pause_reflection: { label: "Sabbatical & Pause", desc: "Time away & deep reflection" },
+  reinvention: { label: "Reinvention & Next Horizon", desc: "Stepping into future chapters" },
+};
+
+function getCardInfo(id: string): { label: string; desc: string } {
+  if (ALL_CARDS_MAP[id]) {
+    return {
+      label: ALL_CARDS_MAP[id].label,
+      desc: ALL_CARDS_MAP[id].desc || "",
+    };
+  }
+  return {
+    label: id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+    desc: "",
+  };
+}
+
+function parseSession1Report(board: any): ReportSection[] {
+  const sections: ReportSection[] = [];
+
+  // Step 1: Book of Life
+  const rawCards = board?.step1?.selectedCards || [];
+  const chapters = Array.isArray(rawCards)
+    ? rawCards.map((id: string) => {
+        const info = getCardInfo(id);
+        return info.desc ? `${info.label} (${info.desc})` : info.label;
+      })
+    : [];
+
+  if (chapters.length > 0) {
+    sections.push({
+      title: "Step 1: Book of Life — Life Chapters",
+      color: "purple",
+      items: chapters.map((ch) => ({ type: "bullet", text: ch })),
+    });
   }
 
+  // Step 2: Exit Bin
+  const exitNotes = Array.isArray(board?.step2?.exitNotes)
+    ? board.step2.exitNotes
+        .map((n: any) => (typeof n === "string" ? n : n?.text))
+        .filter(Boolean)
+    : [];
+
+  if (exitNotes.length > 0) {
+    sections.push({
+      title: "Step 2: Exit Bin — What I Am Letting Go",
+      color: "rust",
+      items: exitNotes.map((note) => ({ type: "bullet", text: note })),
+    });
+  }
+
+  // Step 3: Discovery Landscape
+  const discNotes = Array.isArray(board?.step3?.stickyNotes)
+    ? board.step3.stickyNotes
+        .map((n: any) => ({
+          text: typeof n === "string" ? n : n?.text,
+          zone: n?.zone || n?.category,
+        }))
+        .filter((n: any) => Boolean(n.text))
+    : [];
+
+  if (discNotes.length > 0) {
+    sections.push({
+      title: "Step 3: Discovery Landscape — Forward Pull",
+      color: "teal",
+      items: discNotes.map((n: any) => ({
+        type: "bullet",
+        label: n.zone ? n.zone.toUpperCase() : undefined,
+        text: n.text,
+      })),
+    });
+  }
+
+  // Step 4: Deck of Recognition
+  const selectedRoles = Array.isArray(board?.step4?.selectedRoles) ? board.step4.selectedRoles : [];
+  if (selectedRoles.length > 0) {
+    sections.push({
+      title: "Step 4: Deck of Recognition — Chosen Identities",
+      color: "purple",
+      items: selectedRoles.map((rId: string) => {
+        const info = getCardInfo(rId);
+        return {
+          type: "bullet",
+          label: info.label,
+          text: info.desc ? `— ${info.desc}` : "",
+        };
+      }),
+    });
+  }
+
+  // Step 5: Dinner Table
+  const roleNotes = board?.step5?.roleNotes || {};
+  const tableEntries: { label: string; text: string }[] = [];
+  Object.entries(roleNotes).forEach(([roleId, notes]: [string, any]) => {
+    const rName = getCardInfo(roleId).label;
+    if (Array.isArray(notes)) {
+      notes.forEach((note: any) => {
+        const text = typeof note === "string" ? note : note?.text;
+        if (text) tableEntries.push({ label: rName, text });
+      });
+    }
+  });
+
+  if (tableEntries.length > 0) {
+    sections.push({
+      title: "Step 5: Dinner Table — Identity Conversations",
+      color: "gold",
+      items: tableEntries.map((entry) => ({
+        type: "bullet",
+        label: entry.label,
+        text: entry.text,
+      })),
+    });
+  }
+
+  // Step 6: Grounding vs Draining
+  const roleZones = board?.step6?.roleZones || {};
+  const groundingRoles: string[] = [];
+  const drainingRoles: string[] = [];
+  Object.entries(roleZones).forEach(([roleId, zone]: [string, any]) => {
+    const rName = getCardInfo(roleId).label;
+    if (zone === "grounding") groundingRoles.push(rName);
+    else if (zone === "draining") drainingRoles.push(rName);
+  });
+
+  if (groundingRoles.length > 0 || drainingRoles.length > 0) {
+    const zoneItems: ReportItem[] = [];
+    if (groundingRoles.length > 0) {
+      zoneItems.push({
+        type: "keyvalue",
+        label: "GROUNDING (Energizing)",
+        text: groundingRoles.join(", "),
+      });
+    }
+    if (drainingRoles.length > 0) {
+      zoneItems.push({
+        type: "keyvalue",
+        label: "DRAINING (Depleting)",
+        text: drainingRoles.join(", "),
+      });
+    }
+    sections.push({
+      title: "Step 6: Grounding vs Draining Energy Map",
+      color: "teal",
+      items: zoneItems,
+    });
+  }
+
+  // Step 7: Recognition Word
+  const recWords = Array.isArray(board?.step7?.recognitionWords) ? board.step7.recognitionWords : [];
+  const wordItems = recWords
+    .map((item: any) => {
+      if (typeof item === "string") return item;
+      const word = item?.word || item?.text || "";
+      const role = item?.roleName || (item?.roleId ? getCardInfo(item.roleId).label : "");
+      return word ? `${word}${role ? ` (${role})` : ""}` : "";
+    })
+    .filter(Boolean);
+
+  if (wordItems.length > 0) {
+    sections.push({
+      title: "Step 7: Recognition Word — Unifying Anchor",
+      color: "gold",
+      items: wordItems.map((w: string) => ({
+        type: "callout",
+        label: "Anchor Recognition Word",
+        text: w,
+      })),
+    });
+  }
+
+  return sections;
+}
+
+function parseSession2Report(board: any): ReportSection[] {
+  const sections: ReportSection[] = [];
+
+  const s1Notes = Array.isArray(board?.step1?.notes)
+    ? board.step1.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (s1Notes.length > 0) {
+    sections.push({
+      title: "Step 1: Re-Entry Reflections",
+      color: "teal",
+      items: s1Notes.map((text: string) => ({ type: "bullet", text })),
+    });
+  }
+
+  const selectedIds = Array.isArray(board?.step2?.selectedIdentities) ? board.step2.selectedIdentities : [];
+  if (selectedIds.length > 0) {
+    sections.push({
+      title: "Step 2: Selected Identities to Explore",
+      color: "purple",
+      items: selectedIds.map((id: string) => ({
+        type: "bullet",
+        text: id.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      })),
+    });
+  }
+
+  const idANotes = Array.isArray(board?.step3?.notes)
+    ? board.step3.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  const idALevel = board?.step4?.level;
+  const gridA = board?.step5 || {};
+  const idAItems: ReportItem[] = [];
+  if (idANotes.length > 0) {
+    idAItems.push({ type: "keyvalue", label: "Bridge (What draws you in)", text: idANotes.join("; ") });
+  }
+  if (idALevel !== null && idALevel !== undefined) {
+    idAItems.push({ type: "keyvalue", label: "Energy Thermometer", text: `Level ${idALevel} / 10` });
+  }
+  if (gridA.assets?.length || gridA.customAssets?.length) {
+    const assets = [...(gridA.assets || []), ...(gridA.customAssets || [])];
+    idAItems.push({ type: "keyvalue", label: "Assets & Strengths", text: assets.join(", ") });
+  }
+  if (gridA.actions?.length) {
+    idAItems.push({ type: "keyvalue", label: "Concrete Actions", text: gridA.actions.map((a: any) => typeof a === "string" ? a : a.text).join(", ") });
+  }
+  if (gridA.challenges?.length) {
+    idAItems.push({ type: "keyvalue", label: "Real Challenges", text: gridA.challenges.map((c: any) => typeof c === "string" ? c : c.text).join(", ") });
+  }
+  if (idAItems.length > 0) {
+    sections.push({
+      title: "Identity A: Life Reality Exploration",
+      color: "teal",
+      items: idAItems,
+    });
+  }
+
+  const idBNotes = Array.isArray(board?.step6?.notes)
+    ? board.step6.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  const idBLevel = board?.step7?.level;
+  const gridB = board?.step8 || {};
+  const idBItems: ReportItem[] = [];
+  if (idBNotes.length > 0) {
+    idBItems.push({ type: "keyvalue", label: "Bridge (What draws you in)", text: idBNotes.join("; ") });
+  }
+  if (idBLevel !== null && idBLevel !== undefined) {
+    idBItems.push({ type: "keyvalue", label: "Energy Thermometer", text: `Level ${idBLevel} / 10` });
+  }
+  if (gridB.assets?.length || gridB.customAssets?.length) {
+    const assets = [...(gridB.assets || []), ...(gridB.customAssets || [])];
+    idBItems.push({ type: "keyvalue", label: "Assets & Strengths", text: assets.join(", ") });
+  }
+  if (gridB.actions?.length) {
+    idBItems.push({ type: "keyvalue", label: "Concrete Actions", text: gridB.actions.map((a: any) => typeof a === "string" ? a : a.text).join(", ") });
+  }
+  if (gridB.challenges?.length) {
+    idBItems.push({ type: "keyvalue", label: "Real Challenges", text: gridB.challenges.map((c: any) => typeof c === "string" ? c : c.text).join(", ") });
+  }
+  if (idBItems.length > 0) {
+    sections.push({
+      title: "Identity B: Life Reality Exploration",
+      color: "teal",
+      items: idBItems,
+    });
+  }
+
+  const aligned = board?.step9?.selectedAligned;
+  const alignNotes = Array.isArray(board?.step9?.notes)
+    ? board.step9.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (aligned || alignNotes.length > 0) {
+    const items: ReportItem[] = [];
+    if (aligned) {
+      items.push({ type: "callout", label: "Primary Aligned Identity", text: String(aligned) });
+    }
+    if (alignNotes.length > 0) {
+      items.push({ type: "bullet", label: "Reflection", text: alignNotes.join("; ") });
+    }
+    sections.push({
+      title: "Step 9: Alignment Reflection & Choice",
+      color: "gold",
+      items,
+    });
+  }
+
+  return sections;
+}
+
+function parseSession3Report(board: any): ReportSection[] {
+  const sections: ReportSection[] = [];
+
+  const s1Notes = Array.isArray(board?.step1?.notes)
+    ? board.step1.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (board?.step1?.anchorIdentityOverride || s1Notes.length > 0 || board?.step1?.response) {
+    const items: ReportItem[] = [];
+    if (board?.step1?.anchorIdentityOverride) {
+      items.push({ type: "keyvalue", label: "Confirmed Anchor Identity", text: String(board.step1.anchorIdentityOverride) });
+    }
+    if (board?.step1?.response) {
+      items.push({ type: "keyvalue", label: "Initial Sense", text: String(board.step1.response) });
+    }
+    s1Notes.forEach((text: string) => items.push({ type: "bullet", text }));
+    sections.push({
+      title: "Step 1: Anchor Identity Recalibration",
+      color: "gold",
+      items,
+    });
+  }
+
+  const s2 = board?.step2 || {};
+  const expItems: ReportItem[] = [];
+  const extractTexts = (arr: any[]) =>
+    Array.isArray(arr) ? arr.map((n) => (typeof n === "string" ? n : n?.text)).filter(Boolean) : [];
+  const observe = extractTexts(s2.observe);
+  const converse = extractTexts(s2.converse);
+  const act = extractTexts(s2.act);
+
+  if (observe.length > 0) expItems.push({ type: "keyvalue", label: "OBSERVE (Low Stakes)", text: observe.join("; ") });
+  if (converse.length > 0) expItems.push({ type: "keyvalue", label: "CONVERSE (Medium Stakes)", text: converse.join("; ") });
+  if (act.length > 0) expItems.push({ type: "keyvalue", label: "ACT (High Stakes)", text: act.join("; ") });
+
+  if (expItems.length > 0) {
+    sections.push({
+      title: "Step 2: Experiment Design (Low-Risk Prototypes)",
+      color: "teal",
+      items: expItems,
+    });
+  }
+
+  const s3 = board?.step3 || {};
+  const s3Notes = Array.isArray(s3.additionalNotes)
+    ? s3.additionalNotes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (s3Notes.length > 0 || (s3.challengeMappings && Object.keys(s3.challengeMappings).length > 0)) {
+    const items: ReportItem[] = [];
+    if (s3.challengeMappings) {
+      Object.entries(s3.challengeMappings).forEach(([k, v]: [string, any]) => {
+        if (v) items.push({ type: "keyvalue", label: k, text: String(v) });
+      });
+    }
+    s3Notes.forEach((text: string) => items.push({ type: "bullet", text }));
+    sections.push({
+      title: "Step 3: Friction Mapping & Anticipated Challenges",
+      color: "rust",
+      items,
+    });
+  }
+
+  const s4 = board?.step4 || {};
+  const s4Notes = Array.isArray(s4.notes)
+    ? s4.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (s4.commitmentDate || s4Notes.length > 0) {
+    const items: ReportItem[] = [];
+    if (s4.commitmentDate) {
+      items.push({ type: "callout", label: "Target Commitment Date", text: String(s4.commitmentDate) });
+    }
+    if (s4.numberOfActions) {
+      items.push({ type: "keyvalue", label: "Committed Actions", text: `${s4.numberOfActions} action(s)` });
+    }
+    s4Notes.forEach((text: string) => items.push({ type: "bullet", text }));
+    sections.push({
+      title: "Step 4: First Step Commitment & Action Plan",
+      color: "purple",
+      items,
+    });
+  }
+
+  return sections;
+}
+
+function parseSession4Report(board: any): ReportSection[] {
+  const sections: ReportSection[] = [];
+
+  const s1Notes = Array.isArray(board?.step1?.notes)
+    ? board.step1.notes.map((n: any) => (typeof n === "string" ? n : n?.text)).filter(Boolean)
+    : [];
+  if (s1Notes.length > 0) {
+    sections.push({
+      title: "Step 1: Real-World Experience (What I Tried)",
+      color: "teal",
+      items: s1Notes.map((text: string) => ({ type: "bullet", text })),
+    });
+  }
+
+  const s2 = board?.step2 || {};
+  const s2Items: ReportItem[] = [];
+  const getArray = (arr: any) =>
+    Array.isArray(arr) ? arr.map((n) => (typeof n === "string" ? n : n?.text)).filter(Boolean).join(", ") : "";
+  if (getArray(s2.easy)) s2Items.push({ type: "keyvalue", label: "What felt easy & natural", text: getArray(s2.easy) });
+  if (getArray(s2.requiredEffort)) s2Items.push({ type: "keyvalue", label: "What required effort", text: getArray(s2.requiredEffort) });
+  if (getArray(s2.postponed)) s2Items.push({ type: "keyvalue", label: "What was postponed", text: getArray(s2.postponed) });
+  if (getArray(s2.surprised)) s2Items.push({ type: "keyvalue", label: "What surprised me", text: getArray(s2.surprised) });
+  if (s2Items.length > 0) {
+    sections.push({
+      title: "Step 2: Experiment Debrief & Learnings",
+      color: "purple",
+      items: s2Items,
+    });
+  }
+
+  const s3 = board?.step3 || {};
+  const s3Items: ReportItem[] = [];
+  if (s3.energy) s3Items.push({ type: "keyvalue", label: "What gives me energy", text: String(s3.energy) });
+  if (s3.avoid) s3Items.push({ type: "keyvalue", label: "What I must avoid", text: String(s3.avoid) });
+  if (s3.strengths) s3Items.push({ type: "keyvalue", label: "My unique strengths", text: String(s3.strengths) });
+  if (s3.surprisedMost) s3Items.push({ type: "keyvalue", label: "What surprised me most", text: String(s3.surprisedMost) });
+  if (s3.moreTrueNow) s3Items.push({ type: "keyvalue", label: "What feels most true now", text: String(s3.moreTrueNow) });
+  if (s3Items.length > 0) {
+    sections.push({
+      title: "Step 3: Core Realizations (Who I Am)",
+      color: "gold",
+      items: s3Items,
+    });
+  }
+
+  const s4 = board?.step4 || {};
+  const s4Items: ReportItem[] = [];
+  if (s4.noLongerTryingToProve) s4Items.push({ type: "keyvalue", label: "No longer trying to prove", text: String(s4.noLongerTryingToProve) });
+  if (s4.expectationsReleasing) s4Items.push({ type: "keyvalue", label: "Expectations releasing", text: String(s4.expectationsReleasing) });
+  if (s4.notPursuing) s4Items.push({ type: "keyvalue", label: "Paths not pursuing", text: String(s4.notPursuing) });
+  if (s4.permissionToStop) s4Items.push({ type: "keyvalue", label: "Permission to stop", text: String(s4.permissionToStop) });
+  if (s4Items.length > 0) {
+    sections.push({
+      title: "Step 4: Intentional Release (Letting Go)",
+      color: "rust",
+      items: s4Items,
+    });
+  }
+
+  const s5 = board?.step5?.nextChapter;
+  if (Array.isArray(s5) && s5.length > 0) {
+    sections.push({
+      title: "Step 5: My Next Chapter Declaration",
+      color: "purple",
+      items: s5.map((c: any) => ({ type: "bullet", text: typeof c === "string" ? c : c?.text || "" })),
+    });
+  }
+
+  const s6 = board?.step6 || {};
+  const s6Items: ReportItem[] = [];
+  if (getArray(s6.first30)) s6Items.push({ type: "keyvalue", label: "First 30 Days", text: getArray(s6.first30) });
+  if (getArray(s6.second30)) s6Items.push({ type: "keyvalue", label: "Days 31-60", text: getArray(s6.second30) });
+  if (getArray(s6.third30)) s6Items.push({ type: "keyvalue", label: "Days 61-90", text: getArray(s6.third30) });
+  if (s6Items.length > 0) {
+    sections.push({
+      title: "Step 6: The Next 90 Days Roadmap",
+      color: "teal",
+      items: s6Items,
+    });
+  }
+
+  if (board?.step7?.finalReflection) {
+    sections.push({
+      title: "Step 7: Final Reflection",
+      color: "gold",
+      items: [{ type: "callout", label: "What feels clearer to me now", text: String(board.step7.finalReflection) }],
+    });
+  }
+
+  return sections;
+}
+
+function parseGenericReport(board: any): ReportSection[] {
+  const sections: ReportSection[] = [];
+  if (!board || typeof board !== "object") return sections;
+
+  Object.entries(board).forEach(([key, val]: [string, any]) => {
+    if (key === "currentStep" || key === "updatedAt" || key === "journeyCompleted") return;
+    const title = key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+    const items: ReportItem[] = [];
+
+    if (Array.isArray(val)) {
+      val.forEach((item) => {
+        const text = typeof item === "string" ? item : item?.text || JSON.stringify(item);
+        if (text) items.push({ type: "bullet", text });
+      });
+    } else if (typeof val === "object" && val !== null) {
+      Object.entries(val).forEach(([k, v]: [string, any]) => {
+        if (Array.isArray(v)) {
+          const t = v.map((x) => (typeof x === "string" ? x : x?.text || "")).filter(Boolean).join(", ");
+          if (t) items.push({ type: "keyvalue", label: k.replace(/_/g, " "), text: t });
+        } else if (v !== null && v !== undefined && typeof v !== "object") {
+          items.push({ type: "keyvalue", label: k.replace(/_/g, " "), text: String(v) });
+        }
+      });
+    } else if (val) {
+      items.push({ type: "text", text: String(val) });
+    }
+
+    if (items.length > 0) {
+      sections.push({ title, color: "purple", items });
+    }
+  });
+
+  return sections;
+}
+
+function createPdf(reportOrLines: any): Uint8Array {
+  // Backward compatibility: If an array of plain string lines was passed
+  const report: StructuredReportData = typeof reportOrLines === "object" && "sections" in reportOrLines
+    ? reportOrLines
+    : {
+        journeyTitle: "Zest Journey",
+        sessionNumber: 1,
+        sessionTitle: "Session Report",
+        participant: "Participant",
+        status: "Completed",
+        completedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+        generatedDate: new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" }),
+        sections: [
+          {
+            title: "Session Responses",
+            color: "purple",
+            items: (Array.isArray(reportOrLines) ? reportOrLines : []).map((l: string) => ({ type: "bullet", text: l })),
+          },
+        ],
+        filename: "session-report.pdf",
+      };
+
+  const PAGE_WIDTH = 595;
+  const PAGE_HEIGHT = 842;
+  const MARGIN_LEFT = 40;
+  const CONTENT_WIDTH = 515;
+  const BOTTOM_MARGIN = 55;
+
+  const colorCodes = {
+    purple: "0.290 0.110 0.361",
+    teal: "0.239 0.427 0.424",
+    gold: "0.831 0.659 0.263",
+    rust: "0.667 0.365 0.325",
+    dark: "0.173 0.094 0.063",
+    muted: "0.450 0.420 0.400",
+    bgWarm: "0.969 0.949 0.933",
+    borderLight: "0.850 0.820 0.780",
+    white: "1.000 1.000 1.000",
+  };
+
+  const pagesStreams: string[] = [];
+  let currentStream = "";
+  let curY = 842;
+  let pageIndex = 0;
+
+  const startNewPage = () => {
+    if (currentStream.length > 0) {
+      pagesStreams.push(currentStream);
+    }
+    pageIndex++;
+    currentStream = "";
+
+    if (pageIndex === 1) {
+      // Top banner
+      currentStream += `${colorCodes.purple} rg 0 765 ${PAGE_WIDTH} 77 re f\n`;
+      currentStream += `${colorCodes.gold} rg 0 761 ${PAGE_WIDTH} 4 re f\n`;
+
+      currentStream += `BT /F2 20 Tf 1 1 1 rg ${MARGIN_LEFT} 802 Td (${pdfEscape("ZUVA LIFE")}) Tj ET\n`;
+      currentStream += `BT /F1 10 Tf 0.96 0.90 0.98 rg ${MARGIN_LEFT} 780 Td (${pdfEscape("ZEST JOURNEY  |  SESSION REPORT")}) Tj ET\n`;
+
+      // Session Overview Card
+      const cardHeight = 72;
+      const cardY = 675;
+      currentStream += `${colorCodes.bgWarm} rg ${MARGIN_LEFT} ${cardY} ${CONTENT_WIDTH} ${cardHeight} re f\n`;
+      currentStream += `${colorCodes.borderLight} RG 1 w ${MARGIN_LEFT} ${cardY} ${CONTENT_WIDTH} ${cardHeight} re S\n`;
+
+      // Card Content
+      currentStream += `BT /F2 13 Tf ${colorCodes.purple} rg ${MARGIN_LEFT + 15} ${cardY + 50} Td (${pdfEscape(
+        `Session ${report.sessionNumber}: ${report.sessionTitle}`
+      )}) Tj ET\n`;
+
+      currentStream += `BT /F2 9.5 Tf ${colorCodes.teal} rg ${MARGIN_LEFT + 15} ${cardY + 30} Td (${pdfEscape(
+        "Journey: "
+      )}) Tj /F1 9.5 Tf ${colorCodes.dark} rg (${pdfEscape(report.journeyTitle)}) Tj ET\n`;
+
+      currentStream += `BT /F2 9.5 Tf ${colorCodes.teal} rg ${MARGIN_LEFT + 15} ${cardY + 14} Td (${pdfEscape(
+        "Participant: "
+      )}) Tj /F1 9.5 Tf ${colorCodes.dark} rg (${pdfEscape(report.participant)}) Tj ET\n`;
+
+      // Right Column
+      currentStream += `BT /F2 9.5 Tf ${colorCodes.teal} rg 350 ${cardY + 30} Td (${pdfEscape(
+        "Status: "
+      )}) Tj /F2 9.5 Tf ${colorCodes.teal} rg (${pdfEscape(report.status.toUpperCase())}) Tj ET\n`;
+
+      currentStream += `BT /F2 9.5 Tf ${colorCodes.teal} rg 350 ${cardY + 14} Td (${pdfEscape(
+        "Completed: "
+      )}) Tj /F1 9.5 Tf ${colorCodes.dark} rg (${pdfEscape(report.completedDate || report.generatedDate)}) Tj ET\n`;
+
+      curY = cardY - 24;
+    } else {
+      // Running header
+      currentStream += `${colorCodes.purple} rg 0 812 ${PAGE_WIDTH} 30 re f\n`;
+      currentStream += `${colorCodes.gold} rg 0 808 ${PAGE_WIDTH} 4 re f\n`;
+      currentStream += `BT /F2 9.5 Tf 1 1 1 rg ${MARGIN_LEFT} 820 Td (${pdfEscape(
+        `Zuva Life  -  Zest Journey  -  Session ${report.sessionNumber}: ${report.sessionTitle}`
+      )}) Tj ET\n`;
+
+      curY = 780;
+    }
+  };
+
+  startNewPage();
+
+  if (report.sections.length === 0) {
+    currentStream += `BT /F3 11 Tf ${colorCodes.muted} rg ${MARGIN_LEFT} ${curY} Td (${pdfEscape(
+      "No session responses were recorded for this session."
+    )}) Tj ET\n`;
+    curY -= 30;
+  } else {
+    for (const section of report.sections) {
+      if (curY < BOTTOM_MARGIN + 70) {
+        startNewPage();
+      }
+
+      const secColor = colorCodes[section.color] || colorCodes.purple;
+
+      // Section Header Banner Pill
+      currentStream += `${secColor} rg ${MARGIN_LEFT} ${curY - 18} ${CONTENT_WIDTH} 22 re f\n`;
+      currentStream += `BT /F2 10.5 Tf 1 1 1 rg ${MARGIN_LEFT + 10} ${curY - 5} Td (${pdfEscape(
+        section.title.toUpperCase()
+      )}) Tj ET\n`;
+      curY -= 30;
+
+      for (const item of section.items) {
+        if (item.type === "callout") {
+          const wrapped = wrapPdfText(item.text, 68);
+          const boxH = Math.max(36, 20 + wrapped.length * 14);
+
+          if (curY - boxH < BOTTOM_MARGIN) {
+            startNewPage();
+          }
+
+          currentStream += `${colorCodes.bgWarm} rg ${MARGIN_LEFT} ${curY - boxH} ${CONTENT_WIDTH} ${boxH} re f\n`;
+          currentStream += `${colorCodes.gold} RG 1.5 w ${MARGIN_LEFT} ${curY - boxH} ${CONTENT_WIDTH} ${boxH} re S\n`;
+
+          if (item.label) {
+            currentStream += `BT /F2 9.5 Tf ${colorCodes.purple} rg ${MARGIN_LEFT + 12} ${curY - 14} Td (${pdfEscape(
+              item.label.toUpperCase() + ":"
+            )}) Tj ET\n`;
+          }
+
+          let textY = item.label ? curY - 28 : curY - 16;
+          for (const line of wrapped) {
+            currentStream += `BT /F2 12 Tf ${colorCodes.dark} rg ${MARGIN_LEFT + 12} ${textY} Td (${pdfEscape(
+              line
+            )}) Tj ET\n`;
+            textY -= 14;
+          }
+
+          curY -= boxH + 12;
+        } else if (item.type === "keyvalue") {
+          const labelPart = item.label ? `${item.label}: ` : "";
+          const fullText = `${labelPart}${item.text}`;
+          const wrapped = wrapPdfText(fullText, 78);
+
+          if (curY - wrapped.length * 13 < BOTTOM_MARGIN) {
+            startNewPage();
+          }
+
+          let first = true;
+          for (const line of wrapped) {
+            if (first && item.label) {
+              currentStream += `BT /F2 9.5 Tf ${secColor} rg ${MARGIN_LEFT + 10} ${curY} Td (${pdfEscape(
+                item.label + ": "
+              )}) Tj /F1 9.5 Tf ${colorCodes.dark} rg (${pdfEscape(
+                line.slice(item.label.length + 2)
+              )}) Tj ET\n`;
+            } else {
+              currentStream += `BT /F1 9.5 Tf ${colorCodes.dark} rg ${MARGIN_LEFT + 10} ${curY} Td (${pdfEscape(
+                line
+              )}) Tj ET\n`;
+            }
+            curY -= 13;
+            first = false;
+          }
+          curY -= 4;
+        } else {
+          // Bullet or standard item
+          const prefix = "*  ";
+          const labelPrefix = item.label ? `[${item.label}] ` : "";
+          const full = `${labelPrefix}${item.text}`;
+          const wrapped = wrapPdfText(full, 75);
+
+          if (curY - wrapped.length * 13 < BOTTOM_MARGIN) {
+            startNewPage();
+          }
+
+          let isFirst = true;
+          for (const line of wrapped) {
+            if (isFirst) {
+              currentStream += `BT /F2 10 Tf ${secColor} rg ${MARGIN_LEFT + 8} ${curY} Td (${pdfEscape(
+                prefix
+              )}) Tj `;
+              if (item.label) {
+                currentStream += `/F2 9.5 Tf ${secColor} rg (${pdfEscape(labelPrefix)}) Tj /F1 9.5 Tf ${
+                  colorCodes.dark
+                } rg (${pdfEscape(line.slice(labelPrefix.length))}) Tj ET\n`;
+              } else {
+                currentStream += `/F1 9.5 Tf ${colorCodes.dark} rg (${pdfEscape(line)}) Tj ET\n`;
+              }
+            } else {
+              currentStream += `BT /F1 9.5 Tf ${colorCodes.dark} rg ${MARGIN_LEFT + 22} ${curY} Td (${pdfEscape(
+                line
+              )}) Tj ET\n`;
+            }
+            curY -= 13;
+            isFirst = false;
+          }
+          curY -= 3;
+        }
+      }
+
+      curY -= 10;
+    }
+  }
+
+  if (currentStream.length > 0) {
+    pagesStreams.push(currentStream);
+  }
+
+  const totalPages = pagesStreams.length;
+
+  // Add footers with totalPages
+  const finalPageStreams = pagesStreams.map((stream, idx) => {
+    let s = stream;
+    s += `${colorCodes.borderLight} RG 0.5 w ${MARGIN_LEFT} 38 m ${PAGE_WIDTH - MARGIN_LEFT} 38 l S\n`;
+    s += `BT /F1 8 Tf ${colorCodes.muted} rg ${MARGIN_LEFT} 26 Td (${pdfEscape(
+      "Zuva Life  *  Zest Journey  *  Confidential & Personal"
+    )}) Tj ET\n`;
+    s += `BT /F1 8 Tf ${colorCodes.muted} rg 485 26 Td (${pdfEscape(`Page ${idx + 1} of ${totalPages}`)}) Tj ET\n`;
+    return s;
+  });
+
+  // Assemble PDF Objects
+  const objects: string[] = [];
+  objects.push("<< /Type /Catalog /Pages 2 0 R >>");
+
+  const fontHelvetica = 3;
+  const fontHelveticaBold = 4;
+  const fontHelveticaOblique = 5;
+  const firstPageObj = 6;
+
+  const pageObjNumbers: number[] = [];
+  finalPageStreams.forEach((_, index) => {
+    pageObjNumbers.push(firstPageObj + index * 2);
+  });
+
+  const kids = pageObjNumbers.map((n) => `${n} 0 R`).join(" ");
+  objects.push(`<< /Type /Pages /Kids [${kids}] /Count ${totalPages} >>`);
+
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>");
+  objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique >>");
+
+  finalPageStreams.forEach((stream, pIdx) => {
+    const pageObjNum = firstPageObj + pIdx * 2;
+    const contentObjNum = pageObjNum + 1;
+
+    objects[pageObjNum - 1] =
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PAGE_WIDTH} ${PAGE_HEIGHT}] /Resources << /Font << /F1 ${fontHelvetica} 0 R /F2 ${fontHelveticaBold} 0 R /F3 ${fontHelveticaOblique} 0 R >> >> /Contents ${contentObjNum} 0 R >>`;
+
+    objects[contentObjNum - 1] =
+      `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  });
+
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [0];
+
+  objects.forEach((obj, idx) => {
+    offsets.push(pdf.length);
+    pdf += `${idx + 1} 0 obj\n${obj}\nendobj\n`;
+  });
+
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+
+  for (let i = 1; i < offsets.length; i++) {
+    pdf += `${String(offsets[i]).padStart(10, "0")} 00000 n \n`;
+  }
+
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\n`;
+  pdf += `startxref\n${xrefOffset}\n%%EOF`;
+
+  return new TextEncoder().encode(pdf);
+}
+
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, Math.min(i + chunkSize, bytes.length)));
+  }
   return btoa(binary);
 }
 
@@ -2026,122 +2596,66 @@ async function buildSessionReport(
   board: any,
   participantEmail?: string
 ) {
-  const sessionNumber =
-    Number(
-      session.sessionNumber
-    );
+  const sessionNumber = Number(session.sessionNumber) || 1;
+  const sessionName = SESSION_NAMES[sessionNumber] || `Session ${sessionNumber}`;
+  const participant = participantEmail || journey.participants?.[0]?.email || journey.participantEmail || "Participant";
 
-  const sessionName =
-    SESSION_NAMES[
-      sessionNumber
-    ] ||
-    `Session ${sessionNumber}`;
-
-  const participant =
-    participantEmail ||
-    journey.participants?.[0]
-      ?.email ||
-    journey.participantEmail ||
-    "Participant";
-
-  const lines: string[] =
-    [];
-
-  lines.push(
-    "ZEST JOURNEY"
-  );
-
-  lines.push(
-    "SESSION REPORT"
-  );
-
-  lines.push("");
-
-  lines.push(
-    `Journey: ${journey.title}`
-  );
-
-  lines.push(
-    `Session ${sessionNumber}: ${sessionName}`
-  );
-
-  lines.push(
-    `Participant: ${participant}`
-  );
-
-  lines.push(
-    `Status: ${session.status}`
-  );
-
-  if (
-    session.completedAt
-  ) {
-    lines.push(
-      `Completed: ${new Date(
-        session.completedAt
-      ).toLocaleDateString(
-        "en-US",
-        {
-          year: "numeric",
-          month: "long",
-          day: "numeric",
-        }
-      )}`
-    );
-  }
-
-  lines.push(
-    `Generated: ${new Date().toLocaleDateString(
-      "en-US",
-      {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
-      }
-    )}`
-  );
-
-  lines.push("");
-
-  lines.push(
-    "SESSION REFLECTIONS"
-  );
-
-  lines.push(
-    "----------------------------------------"
-  );
-
-  const boardLines =
-    flattenBoard(board);
-
-  if (
-    boardLines.length === 0
-  ) {
-    lines.push(
-      "No session responses have been recorded."
-    );
+  let sections: ReportSection[] = [];
+  if (sessionNumber === 1) {
+    sections = parseSession1Report(board);
+  } else if (sessionNumber === 2) {
+    sections = parseSession2Report(board);
+  } else if (sessionNumber === 3) {
+    sections = parseSession3Report(board);
+  } else if (sessionNumber === 4) {
+    sections = parseSession4Report(board);
   } else {
-    lines.push(
-      ...boardLines
-    );
+    sections = parseGenericReport(board);
   }
 
-  lines.push("");
+  const completedDate = session.completedAt
+    ? new Date(session.completedAt).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })
+    : "";
 
-  lines.push(
-    "Zuva Life"
-  );
+  const generatedDate = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
 
-  lines.push(
-    "Zest Journey"
-  );
+  const structured: StructuredReportData = {
+    journeyTitle: journey.title || "Zest Journey",
+    sessionNumber,
+    sessionTitle: sessionName,
+    participant,
+    status: session.status || "Completed",
+    completedDate,
+    generatedDate,
+    sections,
+    filename: `zest-journey-session-${sessionNumber}-report.pdf`,
+  };
+
+  // Plain text lines representation for fallback/inspection
+  const lines: string[] = [
+    "ZEST JOURNEY - SESSION REPORT",
+    `Journey: ${structured.journeyTitle}`,
+    `Session ${sessionNumber}: ${sessionName}`,
+    `Participant: ${participant}`,
+    `Status: ${structured.status}`,
+    "",
+  ];
+
+  sections.forEach((sec) => {
+    lines.push(`--- ${sec.title} ---`);
+    sec.items.forEach((item) => {
+      if (item.label) lines.push(`${item.label}: ${item.text}`);
+      else lines.push(`- ${item.text}`);
+    });
+    lines.push("");
+  });
 
   return {
+    ...structured,
     lines,
     sessionName,
     participant,
-    filename:
-      `zest-journey-session-${sessionNumber}-report.pdf`,
+    filename: structured.filename,
   };
 }
 
@@ -2390,7 +2904,6 @@ app.post(
           user.email,
 
         role:
-          userData?.role ||
           user.role,
       },
     });
@@ -4838,7 +5351,7 @@ app.put(
 
             const pdf =
               createPdf(
-                report.lines
+                report
               );
 
             const base64 =
@@ -5409,9 +5922,19 @@ app.get(
           participantEmail
         );
 
+      if (
+        c.req.query("format") === "json" ||
+        c.req.header("accept")?.includes("application/json")
+      ) {
+        return c.json({
+          success: true,
+          report,
+        });
+      }
+
       const pdf =
         createPdf(
-          report.lines
+          report
         );
 
       return new Response(
@@ -5571,7 +6094,7 @@ app.post(
 
         const pdf =
           createPdf(
-            report.lines
+            report
           );
 
         const base64 =
@@ -5829,7 +6352,7 @@ app.post(
 
           const pdf =
             createPdf(
-              report.lines
+              report
             );
 
           const base64 =

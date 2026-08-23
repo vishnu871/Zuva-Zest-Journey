@@ -342,13 +342,13 @@ const SESSION_META = [
     number: 3,
     title: "Future Self Exploration",
     color: "#D4A843",
-    steps: 8,
+    steps: 4,
   },
   {
     number: 4,
     title: "Integration & Next Steps",
     color: "#AA5D53",
-    steps: 6,
+    steps: 7,
   },
 ];
 

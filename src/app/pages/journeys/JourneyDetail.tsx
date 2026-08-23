@@ -568,7 +568,7 @@ const SESSION_META = [
     title: "Future Self Exploration",
     description:
       "Deepening the exploration of your most aligned identity and mapping the path forward.",
-    steps: 8,
+    steps: 4,
     color: "#D4A843",
   },
   {
@@ -576,7 +576,7 @@ const SESSION_META = [
     title: "Integration & Next Steps",
     description:
       "Bringing it all together — your commitments, support system, and first bold steps.",
-    steps: 6,
+    steps: 7,
     color: "#AA5D53",
   },
 ];

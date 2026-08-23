@@ -221,8 +221,12 @@ import {
   Loader2,
   FileText,
   Download,
+  Eye,
+  Printer,
+  X,
+  Sparkles,
 } from "lucide-react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import { createClient } from "../../../utils/supabase/client";
 import { getAuthHeaders } from "../../../utils/supabase/api";
 import {
@@ -261,6 +265,12 @@ export default function SessionHistory() {
     useState("");
 
   const [downloadingId, setDownloadingId] =
+    useState<string | null>(null);
+
+  const [viewingReport, setViewingReport] =
+    useState<any | null>(null);
+
+  const [loadingReportId, setLoadingReportId] =
     useState<string | null>(null);
 
   const role = location.pathname.startsWith(
@@ -431,6 +441,56 @@ export default function SessionHistory() {
       );
     } finally {
       setDownloadingId(null);
+    }
+  };
+
+  const viewReport = async (
+    session: CompletedSession,
+    event: React.MouseEvent
+  ) => {
+    event.stopPropagation();
+
+    try {
+      setLoadingReportId(session.sessionId);
+
+      const response = await fetch(
+        `${API}/sessions/${session.sessionId}/report?format=json`,
+        {
+          method: "GET",
+          headers: await getAuthHeaders(),
+        }
+      );
+
+      if (!response.ok) {
+        let errorMessage = "Failed to load report preview.";
+        try {
+          const errorData = await response.json();
+          errorMessage = errorData?.error || errorMessage;
+        } catch {
+          // Ignore
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      if (!data?.report) {
+        throw new Error("Report details not found.");
+      }
+
+      setViewingReport({
+        ...data.report,
+        sessionId: session.sessionId,
+        sessionNumber: session.sessionNumber,
+      });
+    } catch (error) {
+      console.error("View report failed:", error);
+      alert(
+        error instanceof Error
+          ? error.message
+          : "Unable to load the report preview. Please use the Download Report button."
+      );
+    } finally {
+      setLoadingReportId(null);
     }
   };
 
@@ -676,64 +736,254 @@ export default function SessionHistory() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={(
-                              event
-                            ) =>
-                              downloadReport(
-                                session,
-                                event
-                              )
-                            }
-                            disabled={
-                              downloadingId ===
-                              session.sessionId
-                            }
+                            onClick={(event) => viewReport(session, event)}
+                            disabled={loadingReportId === session.sessionId}
+                            className="border-[#3D6D6C]/30 text-[#3D6D6C] hover:bg-[#3D6D6C]/10"
+                          >
+                            {loadingReportId === session.sessionId ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <Eye className="w-4 h-4 mr-2" />
+                            )}
+                            View Report
+                          </Button>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={(event) => downloadReport(session, event)}
+                            disabled={downloadingId === session.sessionId}
                             className="border-[#4A1C5C]/20 text-[#4A1C5C] hover:bg-[#4A1C5C]/5"
                           >
-                            {downloadingId ===
-                            session.sessionId ? (
+                            {downloadingId === session.sessionId ? (
                               <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                             ) : (
                               <Download className="w-4 h-4 mr-2" />
                             )}
-
-                            {downloadingId ===
-                            session.sessionId
-                              ? "Preparing..."
-                              : "Download Report"}
+                            {downloadingId === session.sessionId ? "Preparing..." : "Download PDF"}
                           </Button>
 
                           <CheckCircle className="w-5 h-5 text-[#3D6D6C]" />
                         </div>
                       </div>
 
-                      {role ===
-                        "facilitator" &&
-                        session.participantCount >
-                          0 && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground mt-3 pt-3 border-t border-border">
-                            <Users className="w-4 h-4 text-[#3D6D6C]" />
-
-                            <span>
-                              {
-                                session.participantCount
-                              }{" "}
-                              participant
-                              {session.participantCount !==
-                              1
-                                ? "s"
-                                : ""}
-                            </span>
-                          </div>
-                        )}
+                      {role === "facilitator" && session.participantCount > 0 && (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground mt-3 pt-3 border-t border-border">
+                          <Users className="w-4 h-4 text-[#3D6D6C]" />
+                          <span>
+                            {session.participantCount} participant{session.participantCount !== 1 ? "s" : ""}
+                          </span>
+                        </div>
+                      )}
                     </motion.div>
-                  )
-                )}
-              </div>
-            )}
-          </Card>
-        </motion.div>
-      </div>
-    </DashboardLayout>
-  );
-}
+                  ))}
+                </div>
+              )}
+            </Card>
+          </motion.div>
+        </div>
+
+        {/* ── Structured Report Preview Modal ── */}
+        <AnimatePresence>
+          {viewingReport && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-3 sm:p-6 backdrop-blur-sm"
+              onClick={() => setViewingReport(null)}
+            >
+              <motion.div
+                initial={{ scale: 0.95, opacity: 0, y: 16 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.95, opacity: 0, y: 16 }}
+                transition={{ duration: 0.2 }}
+                className="bg-[#FDFBF7] rounded-2xl max-w-3xl w-full max-h-[90vh] flex flex-col shadow-2xl border border-[#EBE2D6] overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Modal Header */}
+                <div className="bg-[#4A1C5C] text-white p-5 sm:p-6 border-b-4 border-[#D4A843] flex items-start justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold tracking-widest text-[#D4A843]">
+                      Zuva Life · Zest Journey
+                    </span>
+                    <h2
+                      className="text-xl sm:text-2xl font-bold mt-1 text-white"
+                      style={{ fontFamily: "Playfair Display, serif" }}
+                    >
+                      Session {viewingReport.sessionNumber}: {viewingReport.sessionTitle}
+                    </h2>
+                    <p className="text-xs text-white/80 mt-0.5">{viewingReport.journeyTitle}</p>
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => window.print()}
+                      className="bg-white/10 hover:bg-white/20 text-white text-xs border border-white/20"
+                    >
+                      <Printer className="w-3.5 h-3.5 mr-1.5" />
+                      Print
+                    </Button>
+
+                    <Button
+                      size="sm"
+                      onClick={(e) =>
+                        downloadReport(
+                          {
+                            sessionId: viewingReport.sessionId,
+                            sessionNumber: viewingReport.sessionNumber,
+                            journeyTitle: viewingReport.journeyTitle,
+                            journeyId: "",
+                            participantCount: 1,
+                          },
+                          e
+                        )
+                      }
+                      disabled={downloadingId === viewingReport.sessionId}
+                      className="bg-[#D4A843] hover:bg-[#C49835] text-[#2C1810] text-xs font-semibold"
+                    >
+                      {downloadingId === viewingReport.sessionId ? (
+                        <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <Download className="w-3.5 h-3.5 mr-1.5" />
+                      )}
+                      Download PDF
+                    </Button>
+
+                    <button
+                      onClick={() => setViewingReport(null)}
+                      className="p-1.5 rounded-lg hover:bg-white/10 text-white/70 hover:text-white transition-colors ml-1"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Modal Body */}
+                <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1 bg-[#FDFBF7]">
+                  {/* Overview Card */}
+                  <div className="bg-[#F7F3EE] rounded-xl p-4 border border-[#EBE2D6] grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                    <div>
+                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Participant:</span>
+                      <span className="text-foreground font-medium">{viewingReport.participant}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Status:</span>
+                      <Badge className="bg-[#3D6D6C] text-white text-[10px] px-2 py-0.5">
+                        {viewingReport.status.toUpperCase()}
+                      </Badge>
+                    </div>
+                    <div>
+                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Journey:</span>
+                      <span className="text-foreground">{viewingReport.journeyTitle}</span>
+                    </div>
+                    <div>
+                      <span className="text-[#3D6D6C] font-semibold block mb-0.5">Date Completed:</span>
+                      <span className="text-foreground">{viewingReport.completedDate || viewingReport.generatedDate}</span>
+                    </div>
+                  </div>
+
+                  {/* Sections */}
+                  {viewingReport.sections && viewingReport.sections.length > 0 ? (
+                    viewingReport.sections.map((sec: any, sIdx: number) => {
+                      const colorMap: Record<string, { headerBg: string; textCol: string; borderCol: string }> = {
+                        purple: { headerBg: "bg-[#4A1C5C]", textCol: "text-[#4A1C5C]", borderCol: "border-[#4A1C5C]/20" },
+                        teal: { headerBg: "bg-[#3D6D6C]", textCol: "text-[#3D6D6C]", borderCol: "border-[#3D6D6C]/20" },
+                        gold: { headerBg: "bg-[#D4A843]", textCol: "text-[#8A6A1D]", borderCol: "border-[#D4A843]/30" },
+                        rust: { headerBg: "bg-[#AA5D53]", textCol: "text-[#AA5D53]", borderCol: "border-[#AA5D53]/20" },
+                      };
+                      const theme = colorMap[sec.color] || colorMap.purple;
+
+                      return (
+                        <div
+                          key={sIdx}
+                          className="bg-white rounded-xl border border-border overflow-hidden shadow-sm hover:border-[#4A1C5C]/30 transition-all"
+                        >
+                          <div className={`${theme.headerBg} text-white px-4 py-2.5 flex items-center justify-between`}>
+                            <h4 className="text-xs sm:text-sm font-semibold tracking-wide uppercase">
+                              {sec.title}
+                            </h4>
+                          </div>
+
+                          <div className="p-4 sm:p-5 space-y-3">
+                            {sec.items.map((item: any, iIdx: number) => {
+                              if (item.type === "callout") {
+                                return (
+                                  <div
+                                    key={iIdx}
+                                    className="p-4 rounded-xl bg-[#F7F3EE] border-2 border-[#D4A843] shadow-sm flex items-start gap-3"
+                                  >
+                                    <Sparkles className="w-5 h-5 text-[#D4A843] flex-shrink-0 mt-0.5" />
+                                    <div>
+                                      {item.label && (
+                                        <p className="text-[11px] font-bold text-[#4A1C5C] uppercase tracking-wider mb-1">
+                                          {item.label}
+                                        </p>
+                                      )}
+                                      <p className="text-base font-bold text-[#2C1810]">
+                                        {item.text}
+                                      </p>
+                                    </div>
+                                  </div>
+                                );
+                              }
+
+                              if (item.type === "keyvalue") {
+                                return (
+                                  <div
+                                    key={iIdx}
+                                    className="flex flex-col sm:flex-row sm:items-baseline gap-1 sm:gap-2 pb-2 border-b border-border/50 last:border-b-0 last:pb-0"
+                                  >
+                                    {item.label && (
+                                      <span className="text-xs font-semibold text-[#3D6D6C] sm:w-44 flex-shrink-0">
+                                        {item.label}:
+                                      </span>
+                                    )}
+                                    <span className="text-xs sm:text-sm text-foreground flex-1">
+                                      {item.text}
+                                    </span>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <div key={iIdx} className="flex items-start gap-2.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-[#4A1C5C] mt-2 flex-shrink-0" />
+                                  <div className="text-xs sm:text-sm text-foreground">
+                                    {item.label && (
+                                      <strong className="text-[#4A1C5C] mr-1.5 font-semibold">
+                                        {item.label}
+                                      </strong>
+                                    )}
+                                    <span>{item.text}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="p-8 text-center text-muted-foreground text-sm">
+                      No responses recorded for this session.
+                    </div>
+                  )}
+                </div>
+
+                {/* Modal Footer */}
+                <div className="p-4 bg-[#F7F3EE] border-t border-border flex items-center justify-between text-xs text-muted-foreground">
+                  <span>Zuva Life · Zest Journey | Confidential & Personal</span>
+                  <Button variant="ghost" size="sm" onClick={() => setViewingReport(null)}>
+                    Close
+                  </Button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </DashboardLayout>
+    );
+  }

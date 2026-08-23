@@ -326,7 +326,7 @@ const SESSION_META = [
     number: 1,
     title: "Identity Discovery",
     color: "#4A1C5C",
-    totalSteps: 8,
+    totalSteps: 7,
   },
   {
     number: 2,
@@ -338,13 +338,13 @@ const SESSION_META = [
     number: 3,
     title: "Future Self Exploration",
     color: "#D4A843",
-    totalSteps: 8,
+    totalSteps: 4,
   },
   {
     number: 4,
     title: "Integration & Next Steps",
     color: "#AA5D53",
-    totalSteps: 8,
+    totalSteps: 7,
   },
 ];
 
@@ -612,24 +612,30 @@ function calculateSessionProgress(
     }
   });
 
-  const percentage = Math.min(
-    100,
-    Math.round(
-      (Math.max(currentStep, 1) / totalSteps) * 100
-    )
-  );
+  const isCompleted =
+    boardState.completed === true ||
+    boardState.journeyCompleted === true ||
+    currentStep >= totalSteps;
+
+  const percentage = isCompleted
+    ? 100
+    : Math.min(
+        100,
+        Math.round(
+          (Math.max(currentStep, 1) / totalSteps) * 100
+        )
+      );
 
   return {
     sessionId: "",
     sessionNumber,
-    currentStep,
+    currentStep: isCompleted ? totalSteps : currentStep,
     totalSteps,
-    percentage: hasData
+    percentage: hasData || isCompleted
       ? percentage
       : 0,
-    hasData,
-    completed:
-      currentStep >= totalSteps,
+    hasData: hasData || isCompleted,
+    completed: isCompleted,
   };
 }
 
@@ -763,10 +769,15 @@ export default function FacilitatorDashboard() {
                * Trust explicit session completion
                * as well as the board's current step.
                */
-              progress.completed =
-                session.status ===
-                  "completed" ||
-                progress.completed;
+              if (
+                session.status === "completed" ||
+                progress.completed
+              ) {
+                progress.completed = true;
+                progress.percentage = 100;
+                progress.currentStep = progress.totalSteps;
+                progress.hasData = true;
+              }
 
               progressMap[
                 session.id
@@ -1746,25 +1757,30 @@ export default function FacilitatorDashboard() {
                                   session.id
                                 ];
 
+                              const completed =
+                                session.status ===
+                                  "completed" ||
+                                (progress?.completed ?? false);
+
                               const percentage =
-                                progress
+                                completed
+                                  ? 100
+                                  : progress
                                   ?.percentage ||
                                 0;
 
                               const currentStep =
-                                progress
+                                completed
+                                  ? meta.totalSteps
+                                  : progress
                                   ?.currentStep ||
                                 0;
 
                               const hasData =
-                                progress
+                                completed ||
+                                (progress
                                   ?.hasData ||
-                                false;
-
-                              const completed =
-                                session.status ===
-                                  "completed" ||
-                                progress?.completed;
+                                false);
 
                               return (
                                 <div
