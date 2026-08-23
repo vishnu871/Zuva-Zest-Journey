@@ -4609,26 +4609,9 @@ app.put(
         }
 
         if (
-          status ===
-          "completed"
-        ) {
-          return c.json(
-            {
-              success: false,
-              error:
-                "Only the facilitator can complete or end a session.",
-              code:
-                "FACILITATOR_ONLY",
-            },
-            403
-          );
-        }
-
-        if (
-          status !==
-            "in_progress" &&
-          status !==
-            currentStatus
+          status !== "in_progress" &&
+          status !== "completed" &&
+          status !== currentStatus
         ) {
           return c.json(
             {
@@ -4643,31 +4626,33 @@ app.put(
         const now =
           new Date().toISOString();
 
-        session.status =
-          "in_progress";
+        if (status === "completed") {
+          session.status = "completed";
+          session.completedAt = session.completedAt || now;
+          session.updatedAt = now;
 
-        session.startedAt =
-          session.startedAt ||
-          now;
+          journeySession.status = "completed";
+          journeySession.completedAt = journeySession.completedAt || now;
+          journeySession.updatedAt = now;
+        } else if (status === "in_progress") {
+          session.status = "in_progress";
+          session.startedAt = session.startedAt || now;
+          session.updatedAt = now;
 
-        session.updatedAt =
-          now;
+          journeySession.status = "in_progress";
+          journeySession.startedAt = journeySession.startedAt || now;
+          journeySession.updatedAt = now;
+        }
 
         await saveSession(
           session
         );
 
-        journeySession.status =
-          "in_progress";
-
-        journeySession.startedAt =
-          journeySession.startedAt ||
-          now;
-
-        journeySession.updatedAt =
-          now;
-
         await saveJourney(
+          journey
+        );
+
+        await ensureParticipantJourneyIndex(
           journey
         );
 
