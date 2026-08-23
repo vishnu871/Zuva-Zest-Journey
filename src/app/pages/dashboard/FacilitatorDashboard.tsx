@@ -714,6 +714,8 @@ export default function FacilitatorDashboard() {
       SessionProgress
     > = {};
 
+    const { headers } = await getAuthHeaders();
+
     /*
      * Fetch every session board.
      *
@@ -733,10 +735,7 @@ export default function FacilitatorDashboard() {
                 `${API}/sessions/${session.id}/board`,
                 {
                   method: "GET",
-                  headers: {
-                    "Content-Type":
-                      "application/json",
-                  },
+                  headers,
                   cache: "no-store",
                 }
               );

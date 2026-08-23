@@ -224,17 +224,12 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { createClient } from "../../../utils/supabase/client";
+import { getAuthHeaders } from "../../../utils/supabase/api";
 import {
   projectId,
-  publicAnonKey,
 } from "../../../utils/supabase/info";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
-
-const HEADERS = {
-  "Content-Type": "application/json",
-  Authorization: `Bearer ${publicAnonKey}`,
-};
 
 const SESSION_NAMES: Record<number, string> = {
   1: "Identity Discovery",
@@ -294,12 +289,13 @@ export default function SessionHistory() {
         }
 
         let res: Response;
+        const headers = await getAuthHeaders();
 
         if (role === "facilitator") {
           res = await fetch(
             `${API}/journeys/facilitator/${user.id}`,
             {
-              headers: HEADERS,
+              headers,
             }
           );
         } else {
@@ -308,7 +304,7 @@ export default function SessionHistory() {
               user.email || ""
             )}`,
             {
-              headers: HEADERS,
+              headers,
             }
           );
         }
@@ -370,7 +366,7 @@ export default function SessionHistory() {
         `${API}/sessions/${session.sessionId}/report`,
         {
           method: "GET",
-          headers: HEADERS,
+          headers: await getAuthHeaders(),
         }
       );
 

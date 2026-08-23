@@ -6,10 +6,10 @@ import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { ArrowLeft, Play, RotateCcw, Eye, Users, Hash, Loader2, Lock, CheckCircle, Clock } from "lucide-react";
 import { motion } from "motion/react";
-import { projectId, publicAnonKey } from "../../../utils/supabase/info";
+import { getAuthHeaders } from "../../../utils/supabase/api";
+import { projectId } from "../../../utils/supabase/info";
 
 const API = `https://${projectId}.supabase.co/functions/v1/make-server-dc18f5b2`;
-const HEADERS = { "Content-Type": "application/json", "Authorization": `Bearer ${publicAnonKey}` };
 
 const SESSION_NAMES: Record<number, string> = {
   1: "Identity Discovery",
@@ -51,7 +51,9 @@ export default function SessionDetail() {
     if (!id) return;
     (async () => {
       try {
-        const res = await fetch(`${API}/sessions/${id}`, { headers: HEADERS });
+        const res = await fetch(`${API}/sessions/${id}`, {
+          headers: await getAuthHeaders(),
+        });
         const data = await res.json();
         if (!res.ok || !data.success) {
           setError(data.error || "Session not found.");

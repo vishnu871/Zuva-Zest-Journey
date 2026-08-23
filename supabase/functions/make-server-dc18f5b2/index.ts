@@ -421,6 +421,9 @@ interface AuthenticatedUser {
   id: string;
   email?: string;
   role?: UserRole;
+  authMetadataRole?: unknown;
+  databaseUserId?: string;
+  databaseRole?: unknown;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -650,6 +653,19 @@ async function getAuthenticatedUser(
         user.email,
 
       role,
+
+      // Diagnostic context for protected authorization paths. These values
+      // are derived server-side; no client-provided identity is trusted.
+      authMetadataRole:
+        metadataRole,
+
+      databaseUserId:
+        typeof userData?.id === "string"
+          ? userData.id
+          : undefined,
+
+      databaseRole:
+        kvRole,
     };
   } catch (error) {
     console.error(
@@ -4092,17 +4108,46 @@ app.put(
       const facilitatorAccess =
         isFacilitatorForJourney(journey, auth.user);
 
+      const assignmentMatchesAuthenticatedUser =
+        typeof journey.facilitatorId === "string" &&
+        journey.facilitatorId === auth.user.id;
+
+      const finalFacilitatorAuthorization =
+        auth.user.role === "facilitator" &&
+        assignmentMatchesAuthenticatedUser;
+
       console.log(
         "[sessions/status] Authorization identity check",
         {
+          // 1. Authenticated Supabase auth.users.id, obtained by verifying
+          //    the Bearer token with supabase.auth.getUser(token).
           authenticatedUserId: auth.user.id,
           authenticatedRole: auth.user.role,
+          authenticatedMetadataRole: auth.user.authMetadataRole ?? null,
+
+          // 2. Requested session ID.
           authenticatedEmail: auth.user.email,
           sessionId,
+
+          // 3. Session records currently do not persist a facilitator ID;
+          //    ownership is persisted on the parent journey. Log both so a
+          //    future schema change cannot silently alter this conclusion.
           sessionFacilitatorId: session.facilitatorId ?? null,
+          journeySessionFacilitatorId:
+            journeySession.facilitatorId ?? null,
           journeyFacilitatorId: journey.facilitatorId ?? null,
           journeyFacilitatorEmail: journey.facilitatorEmail ?? null,
+
+          // 4. The only profile/user record read by this function is the
+          //    server-side KV record user:<auth.users.id>.
+          databaseUserRecordId: auth.user.databaseUserId ?? null,
+          databaseUserRecordRole: auth.user.databaseRole ?? null,
+
+          // 5. Both the legacy helper result (which may allow email) and the
+          //    strict authorization result used for owner operations.
+          assignmentMatchesAuthenticatedUser,
           facilitatorAccess,
+          finalFacilitatorAuthorization,
         }
       );
 
