@@ -1,4 +1,4 @@
-﻿// import { useState, useEffect } from "react";
+// import { useState, useEffect } from "react";
 // import { useNavigate, useLocation } from "react-router";
 // import DashboardLayout from "../../components/DashboardLayout";
 // import { Card } from "../../components/ui/card";
@@ -934,37 +934,34 @@ export default function SessionHistory() {
                     {/* â”€â”€ Sections â”€â”€ */}
                     {viewingReport.sections && viewingReport.sections.length > 0 ? (
                       viewingReport.sections.map((sec: any, sIdx: number) => {
-                        const themeMap: Record<string, {
-                          pin: string; zoneBg: string; zoneHeader: string;
-                          headerText: string; noteColors: string[];
-                        }> = {
+                        const themeMap: Record<string, { pin: string; zoneBg: string; zoneHeader: string; headerColor: string; noteColors: string[] }> = {
                           purple: {
                             pin: "#4A1C5C",
                             zoneBg: "rgba(74,28,92,0.04)",
                             zoneHeader: "linear-gradient(135deg, #4A1C5C, #5A2C6C)",
-                            headerText: "text-white",
-                            noteColors: ["#F3E5F5", "#E1BEE7", "#EDE7F6", "#D1C4E9"],
+                            headerColor: "#FFFFFF",
+                            noteColors: ["#FFF176", "#CCFF90", "#FFCCBC", "#B3E5FC", "#E1BEE7"],
                           },
                           teal: {
                             pin: "#3D6D6C",
                             zoneBg: "rgba(61,109,108,0.05)",
                             zoneHeader: "linear-gradient(135deg, #3D6D6C, #4D7D7C)",
-                            headerText: "text-white",
-                            noteColors: ["#E0F2F1", "#B2DFDB", "#E8F5E9", "#C8E6C9"],
+                            headerColor: "#FFFFFF",
+                            noteColors: ["#B3E5FC", "#CCFF90", "#FFF176", "#E1BEE7", "#FFCCBC"],
                           },
                           gold: {
                             pin: "#C49835",
                             zoneBg: "rgba(212,168,67,0.06)",
                             zoneHeader: "linear-gradient(135deg, #D4A843, #C49835)",
-                            headerText: "text-[#2C1810]",
-                            noteColors: ["#FFFDE7", "#FFF9C4", "#FFF8E1", "#FFECB3"],
+                            headerColor: "#2C1810",
+                            noteColors: ["#FFF176", "#FFCCBC", "#CCFF90", "#E1BEE7", "#B3E5FC"],
                           },
                           rust: {
                             pin: "#AA5D53",
                             zoneBg: "rgba(170,93,83,0.05)",
                             zoneHeader: "linear-gradient(135deg, #AA5D53, #BA6D63)",
-                            headerText: "text-white",
-                            noteColors: ["#FBE9E7", "#FFCCBC", "#FFE0B2", "#FFCCBC"],
+                            headerColor: "#FFFFFF",
+                            noteColors: ["#FFCCBC", "#FFF176", "#E1BEE7", "#CCFF90", "#B3E5FC"],
                           },
                         };
                         const t = themeMap[sec.color] || themeMap.purple;
@@ -1000,11 +997,11 @@ export default function SessionHistory() {
                             >
                               {/* Zone header */}
                               <div
-                                className={`px-5 py-3 flex items-center justify-between ${t.headerText}`}
-                                style={{ background: t.zoneHeader }}
+                                className="px-5 py-3 flex items-center justify-between"
+                                style={{ background: t.zoneHeader, color: t.headerColor }}
                               >
-                                <h4 className="text-sm font-bold tracking-wide uppercase">{sec.title}</h4>
-                                <span className="text-[10px] opacity-70 font-medium">
+                                <h4 className="text-sm font-bold tracking-wide uppercase" style={{ color: t.headerColor }}>{sec.title}</h4>
+                                <span className="text-[10px] font-medium" style={{ color: t.headerColor, opacity: 0.85 }}>
                                   {sec.items.length} item{sec.items.length !== 1 ? "s" : ""}
                                 </span>
                               </div>
