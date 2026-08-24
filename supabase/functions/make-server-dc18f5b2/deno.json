@@ -2,6 +2,7 @@
   "compilerOptions": {
     "strict": true
   },
+  "nodeModulesDir": "auto",
   "imports": {
     "npm:@supabase/supabase-js": "npm:@supabase/supabase-js@2.49.8"
   }

@@ -426,6 +426,10 @@ interface AuthenticatedUser {
   databaseRole?: unknown;
 }
 
+type AuthResult =
+  | { ok: true; user: AuthenticatedUser }
+  | { ok: false; response: any };
+
 // ─────────────────────────────────────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────────────────────────────────────
@@ -678,7 +682,7 @@ async function getAuthenticatedUser(
   }
 }
 
-async function requireAuth(c: any) {
+async function requireAuth(c: any): Promise<AuthResult> {
   const user =
     await getAuthenticatedUser(c);
 
@@ -707,7 +711,7 @@ async function requireAuth(c: any) {
 async function requireRole(
   c: any,
   role: UserRole
-) {
+): Promise<AuthResult> {
   const auth =
     await requireAuth(c);
 
@@ -1837,7 +1841,7 @@ function parseSession1Report(board: any): ReportSection[] {
     sections.push({
       title: "Step 2: Exit Bin — What I Am Letting Go",
       color: "rust",
-      items: exitNotes.map((note) => ({ type: "bullet", text: note })),
+      items: exitNotes.map((note: string) => ({ type: "bullet", text: note })),
     });
   }
 
@@ -5154,12 +5158,12 @@ app.put(
               {};
 
             if (
-              participantUserId
+              typeof participantUserId === "string"
             ) {
               board =
                 (await getParticipantBoard(
                   sessionId,
-                  participantUserId,
+                  participantUserId as string,
                   sessionNumber
                 )) || {};
             } else {
@@ -5724,7 +5728,7 @@ app.get(
         );
 
       return new Response(
-        pdf,
+        pdf.slice().buffer as ArrayBuffer,
         {
           status: 200,
 
