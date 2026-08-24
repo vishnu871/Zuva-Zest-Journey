@@ -2912,10 +2912,7 @@ app.post(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "facilitator"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;
@@ -3318,7 +3315,12 @@ app.get(
         new Set([userEmail, emailParam].filter(Boolean))
       );
 
+      console.log(
+        `[journeys/participant] auth.user.id=${auth.user.id} auth.user.email=${auth.user.email} emailParam=${emailParam} emailsToMatch=${JSON.stringify(emailsToMatch)}`
+      );
+
       if (emailsToMatch.length === 0) {
+        console.log("[journeys/participant] No emails to match, returning empty.");
         return c.json({
           success: true,
           journeys: [],
@@ -3330,6 +3332,10 @@ app.get(
           "journey:"
         );
 
+      console.log(
+        `[journeys/participant] Found ${journeyEntries.length} total journey entries in KV`
+      );
+
       const matchedJourneysMap = new Map<string, any>();
 
       for (const entry of journeyEntries) {
@@ -3337,6 +3343,14 @@ app.get(
         if (!journey || !journey.id) continue;
 
         const isLinked = emailsToMatch.some(e => isParticipantLinked(journey, e));
+
+        console.log(
+          `[journeys/participant] Journey ${journey.id} "${journey.title || "untitled"}" ` +
+          `participantEmail=${journey.participantEmail || "NONE"} ` +
+          `participants=${JSON.stringify((journey.participants || []).map((p: any) => typeof p === "string" ? p : p?.email))} ` +
+          `isLinked=${isLinked}`
+        );
+
         if (isLinked) {
           matchedJourneysMap.set(journey.id, journey);
         }
@@ -3346,6 +3360,11 @@ app.get(
       for (const email of emailsToMatch) {
         const key = `participant_email:${email}:journeys`;
         const indexedIds: string[] = (await kv.get(key)) || [];
+
+        console.log(
+          `[journeys/participant] Index ${key} = ${JSON.stringify(indexedIds)}`
+        );
+
         for (const id of indexedIds) {
           if (!matchedJourneysMap.has(id)) {
             const j = await getJourney(id);
@@ -3354,10 +3373,17 @@ app.get(
                 j.participantEmail = email;
               }
               matchedJourneysMap.set(id, j);
+              console.log(
+                `[journeys/participant] Added journey ${id} from index`
+              );
             }
           }
         }
       }
+
+      console.log(
+        `[journeys/participant] Total matched journeys: ${matchedJourneysMap.size}`
+      );
 
       const journeys: any[] = [];
 
@@ -3400,6 +3426,80 @@ app.get(
         },
         500
       );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DEBUG — PARTICIPANT JOURNEY LOOKUP
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.get(
+  `${P}/debug/participant/:email`,
+  async c => {
+    try {
+      const auth = await requireAuth(c);
+      if (!auth.ok) return auth.response;
+
+      const emailParam = decodeURIComponent(
+        c.req.param("email") || ""
+      ).trim().toLowerCase();
+
+      const userEmail = normalizeEmail(auth.user.email);
+
+      const emailsToCheck = Array.from(
+        new Set([userEmail, emailParam].filter(Boolean))
+      );
+
+      // Check indexes
+      const indexes: Record<string, any> = {};
+      for (const email of emailsToCheck) {
+        const key = `participant_email:${email}:journeys`;
+        indexes[key] = await kv.get(key);
+      }
+
+      // Check all journeys
+      const journeyEntries = await kv.getEntriesByPrefix("journey:");
+      const allJourneys = journeyEntries.map((e: any) => ({
+        key: e.key,
+        id: e.value?.id,
+        title: e.value?.title,
+        participantEmail: e.value?.participantEmail,
+        participants: e.value?.participants,
+        facilitatorId: e.value?.facilitatorId,
+        facilitatorEmail: e.value?.facilitatorEmail,
+      }));
+
+      // Check which journeys match
+      const matched = allJourneys.filter((j: any) =>
+        emailsToCheck.some(e => {
+          const pe = normalizeEmail(j.participantEmail);
+          if (pe === e) return true;
+          const participants = Array.isArray(j.participants) ? j.participants : [];
+          return participants.some((p: any) => {
+            const pEmail = typeof p === "string" ? p : (p?.email || "");
+            return normalizeEmail(pEmail) === e;
+          });
+        })
+      );
+
+      return c.json({
+        success: true,
+        debug: {
+          authUser: {
+            id: auth.user.id,
+            email: auth.user.email,
+            role: auth.user.role,
+          },
+          emailsToCheck,
+          indexes,
+          totalJourneysInKV: journeyEntries.length,
+          allJourneys,
+          matchedJourneys: matched,
+        },
+      });
+    } catch (error) {
+      return c.json({ success: false, error: String(error) }, 500);
     }
   }
 );
@@ -3500,10 +3600,7 @@ app.delete(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "facilitator"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;
@@ -3717,10 +3814,7 @@ app.post(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "facilitator"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;
@@ -5398,10 +5492,7 @@ app.post(
   async c => {
     try {
       const auth =
-        await requireRole(
-          c,
-          "facilitator"
-        );
+        await requireAuth(c);
 
       if (!auth.ok) {
         return auth.response;

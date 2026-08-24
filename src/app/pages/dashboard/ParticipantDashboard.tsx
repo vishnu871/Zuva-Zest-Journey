@@ -803,6 +803,11 @@ export default function ParticipantDashboard() {
             );
           }
 
+          console.log(
+            `[participant-dashboard] API response status=${response.status} ok=${response.ok}`,
+            "data=", data
+          );
+
           // ───────────────────────────────────────────────────────────────────
           // AUTH FAILURE
           // ───────────────────────────────────────────────────────────────────
