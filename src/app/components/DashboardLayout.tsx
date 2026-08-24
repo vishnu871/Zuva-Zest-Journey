@@ -270,11 +270,13 @@ import { toast } from "sonner";
 interface DashboardLayoutProps {
   children: ReactNode;
   role: "facilitator" | "participant";
+  userName?: string;
 }
 
 export default function DashboardLayout({
   children,
   role,
+  userName: propUserName,
 }: DashboardLayoutProps) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -283,6 +285,46 @@ export default function DashboardLayout({
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [displayName, setDisplayName] = useState<string>(propUserName || "");
+
+  // Load user name from Supabase auth if not passed via props
+  useEffect(() => {
+    if (propUserName) {
+      setDisplayName(propUserName);
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user && isMounted) {
+          const user = session.user;
+          const name =
+            user.user_metadata?.name ||
+            user.user_metadata?.fullName ||
+            user.user_metadata?.full_name ||
+            "";
+          if (name) {
+            setDisplayName(name);
+          } else if (user.email) {
+            const prefix = user.email.split("@")[0];
+            setDisplayName(prefix);
+          }
+        }
+      } catch (err) {
+        console.error("[DashboardLayout] Error fetching user:", err);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [propUserName]);
 
   // Check if mobile on mount and window resize
   useEffect(() => {
@@ -562,12 +604,23 @@ export default function DashboardLayout({
             }
           `}
         >
-          <p className="text-sm text-white/70">
+          <p className="text-xs text-white/70">
             Signed in as
           </p>
 
-          <p className="font-medium text-white capitalize">
-            {role}
+          <p
+            className="font-medium text-white text-sm truncate mt-0.5"
+            title={
+              displayName ||
+              (role === "facilitator"
+                ? "Facilitator"
+                : "Participant")
+            }
+          >
+            {displayName ||
+              (role === "facilitator"
+                ? "Facilitator"
+                : "Participant")}
           </p>
         </div>
 

@@ -3392,10 +3392,14 @@ app.get(
         journeys.push(journey);
       }
 
-      // Update indexes for each email
+      // Update indexes: MERGE found IDs into existing index, never shrink.
       for (const email of emailsToMatch) {
         const key = `participant_email:${email}:journeys`;
-        await kv.set(key, Array.from(matchedJourneysMap.keys()));
+        const existingIds: string[] = (await kv.get(key)) || [];
+        const mergedIds = Array.from(
+          new Set([...existingIds, ...Array.from(matchedJourneysMap.keys())])
+        );
+        await kv.set(key, mergedIds);
       }
 
       return c.json({
@@ -3538,18 +3542,15 @@ app.get(
       }
 
       const isOwner =
-        auth.user.role ===
-          "facilitator" &&
-        journey.facilitatorId ===
-          auth.user.id;
+        isFacilitatorForJourney(journey, auth.user);
 
       const isParticipant =
-        auth.user.role ===
-          "participant" &&
-        isParticipantLinked(
-          journey,
-          auth.user.email || ""
-        );
+        auth.user.email
+          ? isParticipantLinked(
+              journey,
+              auth.user.email
+            )
+          : false;
 
       if (
         !isOwner &&
@@ -3858,11 +3859,25 @@ app.post(
       const facilitatorAccess =
         isFacilitatorForJourney(journey, auth.user);
 
+      console.log(
+        `[journeys/link] facilitatorAccess=${facilitatorAccess} ` +
+        `auth.user.id=${auth.user.id} auth.user.email=${auth.user.email} auth.user.role=${auth.user.role} ` +
+        `journey.facilitatorId=${journey.facilitatorId} journey.facilitatorEmail=${journey.facilitatorEmail}`
+      );
+
       if (!facilitatorAccess) {
         return c.json(
           {
+            success: false,
             error:
-              "You can only modify your own journeys.",
+              "You can only modify your own journeys. Make sure you are logged in as the facilitator who created this journey.",
+            debug: {
+              authUserId: auth.user.id,
+              authUserEmail: auth.user.email,
+              authUserRole: auth.user.role,
+              journeyFacilitatorId: journey.facilitatorId,
+              journeyFacilitatorEmail: journey.facilitatorEmail,
+            },
           },
           403
         );
@@ -4069,6 +4084,10 @@ app.post(
             `),
         });
 
+      console.log(
+        `[journeys/link] FINAL STATE: journey.participantEmail=${journey.participantEmail} journey.participants=${JSON.stringify(journey.participants?.map((p: any) => typeof p === "string" ? p : p?.email))} indexKey=${participantKey} indexedIds=${JSON.stringify(verifiedIndex)}`
+      );
+
       return c.json({
         success: true,
 
@@ -4096,6 +4115,84 @@ app.post(
         },
         500
       );
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REPAIR — REBUILD ALL PARTICIPANT INDEXES
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post(
+  `${P}/repair/indexes`,
+  async c => {
+    try {
+      const auth = await requireAuth(c);
+      if (!auth.ok) return auth.response;
+
+      // Scan all journeys and rebuild participant_email indexes
+      const journeyEntries = await kv.getEntriesByPrefix("journey:");
+      const emailMap = new Map<string, Set<string>>();
+
+      let totalJourneys = 0;
+      let journeysWithParticipants = 0;
+
+      for (const entry of journeyEntries) {
+        const journey = entry.value;
+        if (!journey || !journey.id) continue;
+        totalJourneys++;
+
+        const emailsForJourney = new Set<string>();
+
+        // Collect from participantEmail
+        const pe = normalizeEmail(journey.participantEmail);
+        if (pe) emailsForJourney.add(pe);
+
+        // Collect from participants array
+        if (Array.isArray(journey.participants)) {
+          for (const p of journey.participants) {
+            const pEmail = normalizeEmail(
+              typeof p === "string" ? p : (p?.email || "")
+            );
+            if (pEmail) emailsForJourney.add(pEmail);
+          }
+        }
+
+        if (emailsForJourney.size > 0) {
+          journeysWithParticipants++;
+          for (const email of emailsForJourney) {
+            if (!emailMap.has(email)) emailMap.set(email, new Set());
+            emailMap.get(email)!.add(journey.id);
+          }
+        }
+
+        console.log(
+          `[repair/indexes] journey ${journey.id} "${journey.title}" → emails: ${JSON.stringify(Array.from(emailsForJourney))}`
+        );
+      }
+
+      // Write rebuilt indexes
+      for (const [email, journeyIds] of emailMap.entries()) {
+        const key = `participant_email:${email}:journeys`;
+        const ids = Array.from(journeyIds);
+        await kv.set(key, ids);
+        console.log(`[repair/indexes] Wrote ${key} = ${JSON.stringify(ids)}`);
+      }
+
+      return c.json({
+        success: true,
+        totalJourneys,
+        journeysWithParticipants,
+        indexesBuilt: Object.fromEntries(
+          Array.from(emailMap.entries()).map(([email, ids]) => [
+            email,
+            Array.from(ids),
+          ])
+        ),
+      });
+    } catch (error) {
+      console.error("[repair/indexes]", error);
+      return c.json({ success: false, error: String(error) }, 500);
     }
   }
 );
