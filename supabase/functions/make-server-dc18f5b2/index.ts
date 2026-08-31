@@ -3635,6 +3635,7 @@ app.delete(
       }
 
       const facilitatorAccess =
+        auth.user.role === "facilitator" ||
         isFacilitatorForJourney(journey, auth.user);
 
       if (!facilitatorAccess) {
