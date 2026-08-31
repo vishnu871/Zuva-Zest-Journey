@@ -1666,11 +1666,19 @@ export default function JourneyDetail() {
         }
 
         if (
-          response.status === 401 ||
-          response.status === 403
+          response.status === 401
         ) {
           throw new Error(
             "AUTHENTICATION_REQUIRED"
+          );
+        }
+
+        if (
+          response.status === 403
+        ) {
+          throw new Error(
+            data?.error ||
+              "You do not have permission to delete this journey."
           );
         }
 

@@ -3392,14 +3392,10 @@ app.get(
         journeys.push(journey);
       }
 
-      // Update indexes: MERGE found IDs into existing index, never shrink.
+      // Update indexes: store existing matched journey IDs
       for (const email of emailsToMatch) {
         const key = `participant_email:${email}:journeys`;
-        const existingIds: string[] = (await kv.get(key)) || [];
-        const mergedIds = Array.from(
-          new Set([...existingIds, ...Array.from(matchedJourneysMap.keys())])
-        );
-        await kv.set(key, mergedIds);
+        await kv.set(key, Array.from(matchedJourneysMap.keys()));
       }
 
       return c.json({
@@ -3625,10 +3621,10 @@ app.delete(
         );
       }
 
-      if (
-        journey.facilitatorId !==
-        auth.user.id
-      ) {
+      const facilitatorAccess =
+        isFacilitatorForJourney(journey, auth.user);
+
+      if (!facilitatorAccess) {
         return c.json(
           {
             error:
@@ -3721,17 +3717,39 @@ app.delete(
         )
       );
 
+      if (auth.user.email) {
+        const emailFacilitatorKey =
+          `facilitator_email:${normalizeEmail(auth.user.email)}:journeys`;
+        const emailJourneys: string[] =
+          (await kv.get(emailFacilitatorKey)) || [];
+        await kv.set(
+          emailFacilitatorKey,
+          emailJourneys.filter(id => id !== journeyId)
+        );
+      }
+
+      if (
+        journey.facilitatorId &&
+        journey.facilitatorId !== auth.user.id
+      ) {
+        const ownerKey =
+          `facilitator:${journey.facilitatorId}:journeys`;
+        const ownerJourneys: string[] =
+          (await kv.get(ownerKey)) || [];
+        await kv.set(
+          ownerKey,
+          ownerJourneys.filter(id => id !== journeyId)
+        );
+      }
+
       const participantEmails =
         new Set<string>();
 
       if (
         journey.participantEmail
       ) {
-        participantEmails.add(
-          normalizeEmail(
-            journey.participantEmail
-          )
-        );
+        const pe = normalizeEmail(journey.participantEmail);
+        if (pe) participantEmails.add(pe);
       }
 
       for (
@@ -3740,7 +3758,9 @@ app.delete(
       ) {
         const email =
           normalizeEmail(
-            participant?.email
+            typeof participant === "string"
+              ? participant
+              : participant?.email
           );
 
         if (email) {
@@ -3769,6 +3789,21 @@ app.delete(
               id !== journeyId
           )
         );
+      }
+
+      // Also clean any participant index that holds this journeyId
+      const allParticipantKeys =
+        await kv.getEntriesByPrefix("participant_email:");
+      for (const entry of allParticipantKeys) {
+        if (
+          Array.isArray(entry.value) &&
+          entry.value.includes(journeyId)
+        ) {
+          await kv.set(
+            entry.key,
+            entry.value.filter((id: string) => id !== journeyId)
+          );
+        }
       }
 
       await kv.del(

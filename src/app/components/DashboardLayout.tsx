@@ -270,20 +270,104 @@ import { toast } from "sonner";
 interface DashboardLayoutProps {
   children: ReactNode;
   role: "facilitator" | "participant";
+  userName?: string;
+}
 
 export default function DashboardLayout({
   children,
   role,
+  userName: propUserName,
 }: DashboardLayoutProps) {
+  const navigate = useNavigate();
   const location = useLocation();
 
   // Sidebar state management
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [displayName, setDisplayName] = useState<string>(propUserName || "");
+
+  // Load user name from Supabase auth if not passed via props
+  useEffect(() => {
+    if (propUserName) {
+      setDisplayName(propUserName);
+      return;
+    }
+
+    let isMounted = true;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+
+        if (session?.user && isMounted) {
+          const user = session.user;
+          const name =
+            user.user_metadata?.name ||
+            user.user_metadata?.fullName ||
+            user.user_metadata?.full_name ||
+            "";
+          if (name) {
+            setDisplayName(name);
+          } else if (user.email) {
+            const prefix = user.email.split("@")[0];
+            setDisplayName(prefix);
+          }
+        }
+      } catch (err) {
+        console.error("[DashboardLayout] Error fetching user:", err);
+      }
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [propUserName]);
 
   // Check if mobile on mount and window resize
+  useEffect(() => {
     const checkMobile = () => {
+      setIsMobile(window.innerWidth < 1024);
+    };
+
+    checkMobile();
+    window.addEventListener("resize", checkMobile);
+
+    return () => window.removeEventListener("resize", checkMobile);
+  }, []);
+
+  // Load sidebar preference from localStorage (desktop only)
+  useEffect(() => {
+    if (!isMobile) {
+      const savedState = localStorage.getItem("sidebar-collapsed");
+
+      if (savedState !== null) {
+        setIsSidebarCollapsed(savedState === "true");
+      }
+    }
+  }, [isMobile]);
+
+  // Save sidebar preference to localStorage
+  const toggleSidebar = () => {
+    const newState = !isSidebarCollapsed;
+
+    setIsSidebarCollapsed(newState);
+    localStorage.setItem("sidebar-collapsed", String(newState));
+  };
+
+  // Close mobile menu when route changes
+  useEffect(() => {
+    setIsMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  const facilitatorMenuItems = [
+    {
+      icon: Home,
+      label: "Dashboard",
+      path: "/facilitator/dashboard",
+    },
     {
       icon: FolderOpen,
       label: "Journeys",
@@ -563,11 +647,18 @@ export default function DashboardLayout({
                   : "w-auto opacity-100 ml-3"
               }
             `}
+          >
             Sign Out
           </span>
 
           {/* Tooltip for collapsed state */}
           {isSidebarCollapsed && !isMobile && (
+            <div
+              className="
+                absolute left-full ml-2 px-3 py-1.5
+                bg-[#4A1C5C] text-white text-xs font-medium
+                rounded-md whitespace-nowrap opacity-0 group-hover:opacity-100
+                pointer-events-none transition-opacity duration-200
                 z-50
                 shadow-lg
                 border border-white/10
