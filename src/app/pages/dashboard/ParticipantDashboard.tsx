@@ -844,6 +844,13 @@ export default function ParticipantDashboard() {
               data
             );
 
+            // Never leave a previous successful response on screen after an
+            // authorization failure.  This prevents a deleted or no-longer
+            // assigned journey from remaining visible in an open tab.
+            setJourneys(
+              []
+            );
+
             return;
           }
 

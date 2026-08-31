@@ -3311,9 +3311,18 @@ app.get(
           auth.user.email
         );
 
-      const emailsToMatch = Array.from(
-        new Set([userEmail, emailParam].filter(Boolean))
-      );
+      // A participant may only read the journeys linked to the email in the
+      // access token.  Do not merge a URL-provided email here: apart from
+      // being an authorization issue, doing so lets an old browser URL keep
+      // a stale participant index alive in the response.
+      if (!userEmail || emailParam !== userEmail) {
+        return c.json(
+          { error: "The requested participant email does not match the authenticated user." },
+          403
+        );
+      }
+
+      const emailsToMatch = [userEmail];
 
       console.log(
         `[journeys/participant] auth.user.id=${auth.user.id} auth.user.email=${auth.user.email} emailParam=${emailParam} emailsToMatch=${JSON.stringify(emailsToMatch)}`
@@ -3368,13 +3377,17 @@ app.get(
         for (const id of indexedIds) {
           if (!matchedJourneysMap.has(id)) {
             const j = await getJourney(id);
-            if (j) {
-              if (!j.participantEmail) {
-                j.participantEmail = email;
-              }
+            // Indexes are a cache, never an authorization source.  A stale
+            // index must be removed rather than resurrecting a journey for a
+            // participant who is no longer linked to it.
+            if (j && isParticipantLinked(j, email)) {
               matchedJourneysMap.set(id, j);
               console.log(
-                `[journeys/participant] Added journey ${id} from index`
+                `[journeys/participant] Added verified journey ${id} from index`
+              );
+            } else {
+              console.warn(
+                `[journeys/participant] Ignoring stale index entry ${id} for ${email}`
               );
             }
           }
@@ -3809,6 +3822,15 @@ app.delete(
       await kv.del(
         `journey:${journeyId}`
       );
+
+      // A successful response must mean the record that drives both
+      // dashboards is no longer readable.  Supabase's DELETE can complete
+      // without returning affected rows, so verify the post-condition.
+      if (await getJourney(journeyId)) {
+        throw new Error(
+          `Journey ${journeyId} still exists after deletion.`
+        );
+      }
 
       return c.json({
         success: true,
