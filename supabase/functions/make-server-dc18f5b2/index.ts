@@ -3345,18 +3345,73 @@ app.get(
         `[journeys/participant] Found ${journeyEntries.length} total journey entries in KV`
       );
 
+      // Build a map of all facilitator-owned journey IDs from their indexes.
+      // Any journey NOT in this map has been deleted by the facilitator and must
+      // be excluded even if the journey:${id} row still physically exists in KV.
+      const facilitatorIndexEntries = await kv.getEntriesByPrefix("facilitator:");
+      const facilitatorOwnedIds = new Set<string>();
+      for (const fEntry of facilitatorIndexEntries) {
+        if (Array.isArray(fEntry.value)) {
+          for (const id of fEntry.value) {
+            if (typeof id === "string") facilitatorOwnedIds.add(id);
+          }
+        }
+      }
+
       const matchedJourneysMap = new Map<string, any>();
 
       for (const entry of journeyEntries) {
         const journey = entry.value;
         if (!journey || !journey.id) continue;
 
+        // Cross-check: if the facilitator has removed this journey from their
+        // index, it is considered deleted. Skip it and physically remove the
+        // orphaned KV record so it never resurfaces.
+        if (!facilitatorOwnedIds.has(journey.id)) {
+          // Double-check by looking up the facilitator's index directly.
+          let stillOwned = false;
+          if (journey.facilitatorId) {
+            const fIds: string[] = (await kv.get(`facilitator:${journey.facilitatorId}:journeys`)) || [];
+            if (fIds.includes(journey.id)) stillOwned = true;
+          }
+          if (!stillOwned && journey.facilitatorEmail) {
+            const feIds: string[] = (await kv.get(`facilitator_email:${normalizeEmail(journey.facilitatorEmail)}:journeys`)) || [];
+            if (feIds.includes(journey.id)) stillOwned = true;
+          }
+
+          if (!stillOwned) {
+            // Physically delete the orphaned ghost journey and its sessions/boards
+            console.warn(
+              `[journeys/participant] Deleting orphaned ghost journey ${journey.id} "${journey.title}"`
+            );
+            const ghostSessions: any[] = journey.sessions || [];
+            if (ghostSessions.length === 0 && journey.sessionId) {
+              ghostSessions.push({ id: journey.sessionId });
+            }
+            for (const s of ghostSessions) {
+              if (s?.id) {
+                const boards = await kv.getEntriesByPrefix(`board:${s.id}`);
+                if (boards.length > 0) await kv.mdel(boards.map((b: any) => b.key));
+                await kv.del(`session:${s.id}`).catch(() => {});
+              }
+            }
+            await kv.del(`journey:${journey.id}`).catch(() => {});
+            // Remove from all participant indexes
+            const allPKeys = await kv.getEntriesByPrefix("participant_email:");
+            for (const pEntry of allPKeys) {
+              if (Array.isArray(pEntry.value) && pEntry.value.includes(journey.id)) {
+                await kv.set(pEntry.key, pEntry.value.filter((id: string) => id !== journey.id));
+              }
+            }
+            continue; // Skip — do not return this journey to the participant
+          }
+        }
+
         const isLinked = emailsToMatch.some(e => isParticipantLinked(journey, e));
 
         console.log(
           `[journeys/participant] Journey ${journey.id} "${journey.title || "untitled"}" ` +
           `participantEmail=${journey.participantEmail || "NONE"} ` +
-          `participants=${JSON.stringify((journey.participants || []).map((p: any) => typeof p === "string" ? p : p?.email))} ` +
           `isLinked=${isLinked}`
         );
 
@@ -3377,10 +3432,7 @@ app.get(
         for (const id of indexedIds) {
           if (!matchedJourneysMap.has(id)) {
             const j = await getJourney(id);
-            // Indexes are a cache, never an authorization source.  A stale
-            // index must be removed rather than resurrecting a journey for a
-            // participant who is no longer linked to it.
-            if (j && isParticipantLinked(j, email)) {
+            if (j && isParticipantLinked(j, email) && facilitatorOwnedIds.has(id)) {
               matchedJourneysMap.set(id, j);
               console.log(
                 `[journeys/participant] Added verified journey ${id} from index`
@@ -3405,7 +3457,7 @@ app.get(
         journeys.push(journey);
       }
 
-      // Update indexes: store existing matched journey IDs
+      // Update indexes: store only currently valid journey IDs
       for (const email of emailsToMatch) {
         const key = `participant_email:${email}:journeys`;
         await kv.set(key, Array.from(matchedJourneysMap.keys()));
