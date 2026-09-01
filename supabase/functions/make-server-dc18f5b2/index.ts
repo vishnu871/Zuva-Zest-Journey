@@ -3518,6 +3518,96 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// PARTICIPANT — PURGE STALE JOURNEY REFERENCES
+// Called automatically when participant dashboard loads to clean up deleted
+// journeys that were not properly removed from the participant's index.
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post(
+  `${P}/participant/purge-stale-journeys`,
+  async c => {
+    try {
+      const auth = await requireAuth(c);
+      if (!auth.ok) return auth.response;
+
+      const userEmail = normalizeEmail(auth.user.email);
+      if (!userEmail) {
+        return c.json({ success: true, purged: 0, message: "No email." });
+      }
+
+      // Load the participant index
+      const indexKey = `participant_email:${userEmail}:journeys`;
+      const indexedIds: string[] = (await kv.get(indexKey)) || [];
+
+      // Also do a full KV scan to find any journey referencing this participant
+      // Build the set of valid journey IDs that actually exist in the KV store
+      // and have the participant linked.
+      const journeyEntries = await kv.getEntriesByPrefix("journey:");
+      const validIds = new Set<string>();
+
+      for (const entry of journeyEntries) {
+        const j = entry.value;
+        if (!j || !j.id) continue;
+        if (isParticipantLinked(j, userEmail)) {
+          validIds.add(j.id);
+        }
+      }
+
+      // Any indexed ID that doesn't exist in the valid set is stale
+      const staleIds = indexedIds.filter(id => !validIds.has(id));
+
+      // Also check any indexed ID whose journey key is gone from KV
+      for (const id of indexedIds) {
+        if (!validIds.has(id)) {
+          const j = await getJourney(id);
+          if (!j || !isParticipantLinked(j, userEmail)) {
+            staleIds.push(id);
+          }
+        }
+      }
+
+      const uniqueStaleIds = Array.from(new Set(staleIds));
+
+      if (uniqueStaleIds.length > 0) {
+        // Remove stale IDs from the participant index
+        const cleanedIds = indexedIds.filter(id => !uniqueStaleIds.includes(id));
+        await kv.set(indexKey, cleanedIds);
+
+        console.log(
+          `[purge-stale] Removed ${uniqueStaleIds.length} stale journey IDs for ${userEmail}: ${JSON.stringify(uniqueStaleIds)}`
+        );
+      }
+
+      // Also scan ALL facilitator indexes and look for journey IDs that no longer
+      // exist in KV — delete those from facilitator indexes too (housekeeping).
+      const facilitatorEntries = await kv.getEntriesByPrefix("facilitator:");
+      for (const entry of facilitatorEntries) {
+        if (Array.isArray(entry.value)) {
+          const cleaned = [];
+          for (const id of entry.value) {
+            const j = await kv.get(`journey:${id}`);
+            if (j) cleaned.push(id);
+          }
+          if (cleaned.length !== entry.value.length) {
+            await kv.set(entry.key, cleaned);
+          }
+        }
+      }
+
+      return c.json({
+        success: true,
+        purged: uniqueStaleIds.length,
+        staleIds: uniqueStaleIds,
+        validJourneyCount: validIds.size,
+      });
+    } catch (error) {
+      console.error("[purge-stale]", error);
+      return c.json({ success: false, error: String(error) }, 500);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // JOURNEYS — GET SINGLE
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -765,6 +765,30 @@ export default function ParticipantDashboard() {
                 `Bearer ${session.access_token}`,
             };
 
+          // ───────────────────────────────────────────────────────────────────
+          // PURGE STALE JOURNEY REFERENCES
+          //
+          // Call this before loading journeys so that any deleted journeys are
+          // removed from the participant index before we fetch them.
+          // This is a no-op if there are no stale entries.
+          // ───────────────────────────────────────────────────────────────────
+
+          try {
+            await fetch(
+              `${API}/participant/purge-stale-journeys`,
+              {
+                method: "POST",
+                headers,
+                cache: "no-store",
+              }
+            );
+          } catch (purgeError) {
+            console.warn(
+              "[participant-dashboard] Purge stale journeys failed (non-critical):",
+              purgeError
+            );
+          }
+
           const url =
             `${API}/journeys/participant/${encodeURIComponent(
               email
