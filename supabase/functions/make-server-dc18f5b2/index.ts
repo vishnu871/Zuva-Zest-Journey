@@ -3570,6 +3570,86 @@ app.get(
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ADMIN — HARD-WIPE ALL JOURNEYS FOR A PARTICIPANT EMAIL
+// Nuclear cleanup: scan every journey:* key and delete any that links to the
+// given participant email. Requires facilitator auth.
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.post(
+  `${P}/admin/wipe-participant-journeys`,
+  async c => {
+    try {
+      const auth = await requireAuth(c);
+      if (!auth.ok) return auth.response;
+
+      // Must be facilitator or admin
+      if (auth.user.role !== "facilitator" && auth.user.role !== "admin") {
+        return c.json({ success: false, error: "Forbidden" }, 403);
+      }
+
+      const body = await c.req.json().catch(() => ({}));
+      const targetEmail = normalizeEmail(body.email || "");
+
+      if (!targetEmail) {
+        return c.json({ success: false, error: "email required in body" }, 400);
+      }
+
+      const deleted: string[] = [];
+      const journeyEntries = await kv.getEntriesByPrefix("journey:");
+
+      for (const entry of journeyEntries) {
+        const j = entry.value;
+        if (!j || !j.id) continue;
+
+        const linked = isParticipantLinked(j, targetEmail);
+        if (!linked) continue;
+
+        // Delete sessions + boards
+        const sessions: any[] = j.sessions || [];
+        if (sessions.length === 0 && j.sessionId) sessions.push({ id: j.sessionId });
+        for (const s of sessions) {
+          if (s?.id) {
+            const boards = await kv.getEntriesByPrefix(`board:${s.id}`);
+            if (boards.length > 0) await kv.mdel(boards.map((b: any) => b.key)).catch(() => {});
+            await kv.del(`session:${s.id}`).catch(() => {});
+          }
+        }
+
+        // Remove from all facilitator indexes
+        const facilitatorEntries = await kv.getEntriesByPrefix("facilitator:");
+        for (const fEntry of facilitatorEntries) {
+          if (Array.isArray(fEntry.value) && fEntry.value.includes(j.id)) {
+            await kv.set(fEntry.key, fEntry.value.filter((id: string) => id !== j.id));
+          }
+        }
+
+        // Remove from all participant indexes
+        const participantEntries = await kv.getEntriesByPrefix("participant_email:");
+        for (const pEntry of participantEntries) {
+          if (Array.isArray(pEntry.value) && pEntry.value.includes(j.id)) {
+            await kv.set(pEntry.key, pEntry.value.filter((id: string) => id !== j.id));
+          }
+        }
+
+        // Delete the journey record itself
+        await kv.del(`journey:${j.id}`);
+        deleted.push(j.id);
+
+        console.log(`[admin/wipe] Deleted journey ${j.id} "${j.title}" linked to ${targetEmail}`);
+      }
+
+      // Also wipe the participant index key directly
+      await kv.set(`participant_email:${targetEmail}:journeys`, []);
+
+      return c.json({ success: true, deleted, count: deleted.length });
+    } catch (error) {
+      console.error("[admin/wipe]", error);
+      return c.json({ success: false, error: String(error) }, 500);
+    }
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PARTICIPANT — PURGE STALE JOURNEY REFERENCES
 // Called automatically when participant dashboard loads to clean up deleted
 // journeys that were not properly removed from the participant's index.

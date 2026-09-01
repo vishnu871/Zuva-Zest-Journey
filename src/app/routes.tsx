@@ -17,6 +17,7 @@ import SessionDetail from "./pages/sessions/SessionDetail";
 import SessionHistory from "./pages/sessions/SessionHistory";
 import UpcomingSessions from "./pages/sessions/UpcomingSessions";
 import SessionRouter from "./pages/sessions/SessionRouter";
+import ParticipantProfile from "./pages/participant/ParticipantProfile";
 import NotFound from "./pages/NotFound";
 
 export const router = createBrowserRouter([
@@ -45,7 +46,9 @@ export const router = createBrowserRouter([
       { path: "/participant/session/:id", Component: SessionDetail },
       { path: "/participant/session/:sessionId/board", Component: SessionRouter },
       { path: "/participant/history", Component: SessionHistory },
+      { path: "/participant/profile", Component: ParticipantProfile },
       { path: "*", Component: NotFound },
     ],
   },
 ]);
+

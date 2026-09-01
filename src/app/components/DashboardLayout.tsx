@@ -262,6 +262,7 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
+  User,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { createClient } from "../../utils/supabase/client";
@@ -405,6 +406,11 @@ export default function DashboardLayout({
       icon: FileText,
       label: "Session History",
       path: "/participant/history",
+    },
+    {
+      icon: User,
+      label: "My Profile",
+      path: "/participant/profile",
     },
   ];
 

@@ -275,6 +275,7 @@ import {
   Clock,
   RotateCcw,
   RefreshCw,
+  User,
 } from "lucide-react";
 
 import { motion } from "motion/react";
@@ -1105,32 +1106,43 @@ export default function ParticipantDashboard() {
               </p>
             </div>
 
-            {/* Refresh */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Profile */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => navigate("/participant/profile")}
+                className="flex items-center gap-1.5 border-[#4A1C5C]/25 text-[#4A1C5C] hover:bg-[#4A1C5C]/5"
+              >
+                <User className="w-4 h-4 text-[#4A1C5C]" />
+                <span className="hidden sm:inline">Profile</span>
+              </Button>
 
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                loadJourneys(
-                  true
-                )
-              }
-              disabled={
-                loading ||
-                refreshing
-              }
-              className="flex-shrink-0"
-            >
-              {refreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
+              {/* Refresh */}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  loadJourneys(
+                    true
+                  )
+                }
+                disabled={
+                  loading ||
+                  refreshing
+                }
+              >
+                {refreshing ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
 
-              <span className="hidden sm:inline ml-2">
-                Refresh
-              </span>
-            </Button>
+                <span className="hidden sm:inline ml-2">
+                  Refresh
+                </span>
+              </Button>
+            </div>
           </div>
         </motion.div>
 
