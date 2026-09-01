@@ -3535,70 +3535,120 @@ app.post(
         return c.json({ success: true, purged: 0, message: "No email." });
       }
 
-      // Load the participant index
-      const indexKey = `participant_email:${userEmail}:journeys`;
-      const indexedIds: string[] = (await kv.get(indexKey)) || [];
+      // ── Step 1: Build the set of ALL journey IDs that facilitators still own ──
+      // A journey is "alive" if it appears in at least one facilitator:*:journeys index.
+      const facilitatorEntries = await kv.getEntriesByPrefix("facilitator:");
+      const facilitatorOwnedIds = new Set<string>();
+      for (const entry of facilitatorEntries) {
+        if (Array.isArray(entry.value)) {
+          for (const id of entry.value) {
+            if (typeof id === "string") facilitatorOwnedIds.add(id);
+          }
+        }
+      }
 
-      // Also do a full KV scan to find any journey referencing this participant
-      // Build the set of valid journey IDs that actually exist in the KV store
-      // and have the participant linked.
+      // ── Step 2: Scan ALL journey:* records ──
       const journeyEntries = await kv.getEntriesByPrefix("journey:");
-      const validIds = new Set<string>();
+      const orphanedJourneyKeys: string[] = [];
+      const validIdsForParticipant = new Set<string>();
 
       for (const entry of journeyEntries) {
         const j = entry.value;
         if (!j || !j.id) continue;
+
+        // A journey is orphaned if NO facilitator owns it in their index
+        // AND the journey's own facilitatorId has no index entry for it.
+        const isOrphaned = !facilitatorOwnedIds.has(j.id);
+
+        if (isOrphaned) {
+          // Double-check: look up the facilitator's index directly by facilitatorId
+          let stillOwned = false;
+          if (j.facilitatorId) {
+            const fKey = `facilitator:${j.facilitatorId}:journeys`;
+            const fIds: string[] = (await kv.get(fKey)) || [];
+            if (fIds.includes(j.id)) {
+              stillOwned = true;
+              facilitatorOwnedIds.add(j.id);
+            }
+          }
+          if (j.facilitatorEmail) {
+            const feKey = `facilitator_email:${normalizeEmail(j.facilitatorEmail)}:journeys`;
+            const feIds: string[] = (await kv.get(feKey)) || [];
+            if (feIds.includes(j.id)) {
+              stillOwned = true;
+              facilitatorOwnedIds.add(j.id);
+            }
+          }
+
+          if (!stillOwned) {
+            // Journey is a ghost — delete it
+            orphanedJourneyKeys.push(entry.key);
+            console.log(
+              `[purge-stale] Orphaned journey detected: key=${entry.key} id=${j.id} title="${j.title}"`
+            );
+            continue;
+          }
+        }
+
+        // Journey is valid — check if this participant is linked
         if (isParticipantLinked(j, userEmail)) {
-          validIds.add(j.id);
+          validIdsForParticipant.add(j.id);
         }
       }
 
-      // Any indexed ID that doesn't exist in the valid set is stale
-      const staleIds = indexedIds.filter(id => !validIds.has(id));
+      // ── Step 3: Delete orphaned journey records and their sessions/boards ──
+      for (const key of orphanedJourneyKeys) {
+        const journeyId = key.replace("journey:", "");
+        // Try to load it once more to get session IDs for cleanup
+        const ghost = await kv.get(key);
+        if (ghost) {
+          const sessions: any[] = ghost.sessions || [];
+          if (sessions.length === 0 && ghost.sessionId) {
+            sessions.push({ id: ghost.sessionId });
+          }
+          for (const s of sessions) {
+            if (s?.id) {
+              // Delete boards
+              const boards = await kv.getEntriesByPrefix(`board:${s.id}`);
+              if (boards.length > 0) {
+                await kv.mdel(boards.map((b: any) => b.key));
+              }
+              // Delete session
+              await kv.del(`session:${s.id}`).catch(() => {});
+            }
+          }
+        }
+        await kv.del(key);
 
-      // Also check any indexed ID whose journey key is gone from KV
-      for (const id of indexedIds) {
-        if (!validIds.has(id)) {
-          const j = await getJourney(id);
-          if (!j || !isParticipantLinked(j, userEmail)) {
-            staleIds.push(id);
+        // Clean all participant indexes that reference this orphaned ID
+        const allParticipantKeys = await kv.getEntriesByPrefix("participant_email:");
+        for (const pEntry of allParticipantKeys) {
+          if (Array.isArray(pEntry.value) && pEntry.value.includes(journeyId)) {
+            await kv.set(
+              pEntry.key,
+              pEntry.value.filter((id: string) => id !== journeyId)
+            );
           }
         }
       }
 
-      const uniqueStaleIds = Array.from(new Set(staleIds));
+      // ── Step 4: Clean participant index for this email ──
+      const indexKey = `participant_email:${userEmail}:journeys`;
+      const indexedIds: string[] = (await kv.get(indexKey)) || [];
+      const cleanedIndexIds = indexedIds.filter(id => validIdsForParticipant.has(id));
 
-      if (uniqueStaleIds.length > 0) {
-        // Remove stale IDs from the participant index
-        const cleanedIds = indexedIds.filter(id => !uniqueStaleIds.includes(id));
-        await kv.set(indexKey, cleanedIds);
-
+      if (cleanedIndexIds.length !== indexedIds.length) {
+        await kv.set(indexKey, cleanedIndexIds);
         console.log(
-          `[purge-stale] Removed ${uniqueStaleIds.length} stale journey IDs for ${userEmail}: ${JSON.stringify(uniqueStaleIds)}`
+          `[purge-stale] Cleaned index for ${userEmail}: removed ${indexedIds.length - cleanedIndexIds.length} stale IDs`
         );
-      }
-
-      // Also scan ALL facilitator indexes and look for journey IDs that no longer
-      // exist in KV — delete those from facilitator indexes too (housekeeping).
-      const facilitatorEntries = await kv.getEntriesByPrefix("facilitator:");
-      for (const entry of facilitatorEntries) {
-        if (Array.isArray(entry.value)) {
-          const cleaned = [];
-          for (const id of entry.value) {
-            const j = await kv.get(`journey:${id}`);
-            if (j) cleaned.push(id);
-          }
-          if (cleaned.length !== entry.value.length) {
-            await kv.set(entry.key, cleaned);
-          }
-        }
       }
 
       return c.json({
         success: true,
-        purged: uniqueStaleIds.length,
-        staleIds: uniqueStaleIds,
-        validJourneyCount: validIds.size,
+        orphanedJourneysDeleted: orphanedJourneyKeys.length,
+        indexCleaned: indexedIds.length - cleanedIndexIds.length,
+        validJourneyCount: validIdsForParticipant.size,
       });
     } catch (error) {
       console.error("[purge-stale]", error);
